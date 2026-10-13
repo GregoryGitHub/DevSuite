@@ -22,6 +22,8 @@ import { createMongoTab } from "./dbMongoTab.js";
 import { createConsoleTab, createDdlTab } from "./dbConsole.js";
 import { connectionDialog, dbConfirm, isDbModalOpen, closeDbModal, sqlPreviewDialog } from "./dbDialogs.js";
 import { attachWordComplete } from "./sqlComplete.js";
+import { tableDesigner, ddlActionDialog, quickSchemaAction } from "./dbSchema.js";
+import { renameObjectSql, dropObjectSql, truncateSql, renameColumnRefs, dropColumn } from "../utils/sqlDdl.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
 
 // Aba "Banco": cliente de banco de dados estilo DataGrip (SQL Server / Azure SQL e MongoDB).
@@ -648,6 +650,144 @@ function buildScript(kind, info) {
   return `DELETE FROM ${table}\nWHERE ${whereKeys};`;
 }
 
+// ---------- Estrutura (DDL) ----------
+
+const KIND_LABEL = { table: "tabela", view: "view", procedure: "procedure", function: "função" };
+const ITEM_LABEL = { column: "coluna", key: "chave", index: "índice", fk: "chave estrangeira" };
+
+/** Depois de um DDL: recarrega o Explorer, o autocomplete e as abas abertas do objeto. */
+async function afterDdl({ conn: c, database, schema, name, renamed = null, dropped = false, dataOnly = false }) {
+  completionCache.delete(`${c.id}:${database}`);
+  if (!dataOnly) {
+    explorer?.refreshSchema(c.id, database, schema);
+    if (renamed && renamed.schema !== schema) explorer?.refreshSchema(c.id, database, renamed.schema);
+  }
+  const tabs = data().ui.tabs.filter((t) => (t.type === "table" || t.type === "ddl") && t.conn_id === c.id && t.database === database && t.schema === schema && t.name === name);
+  for (const t of tabs) {
+    if (dropped) {
+      await closeTab(t.id, { force: true });
+      continue;
+    }
+    const ctl = controllers.get(t.id);
+    if (renamed) Object.assign(t, renamed);
+    else if (dataOnly || t.type === "ddl") {
+      ctl?.refresh();
+      continue;
+    } else if (ctl?.dirty) {
+      // Colunas mudaram: a aba é recriada, mas não descarta edições pendentes do grid.
+      toast(`"${t.name}" tem alterações pendentes; reabra a aba para ver a nova estrutura`);
+      continue;
+    }
+    if (ctl) {
+      ctl.dispose();
+      controllers.delete(t.id);
+    }
+    if (data().ui.active_tab === t.id) showTab(t.id);
+  }
+  if (tabs.length) {
+    saveDataSoon();
+    renderTabs();
+  }
+}
+
+const schemaCtx = {
+  dialect: () => dialect(),
+  toast,
+  log,
+  copy,
+  openConsole: (c, database, sql) => openConsole(c, database, sql),
+  completions,
+  attachColumnComplete: attachWordComplete,
+  afterDdl,
+};
+
+const schemaActions = {
+  modify: (ref, focus = {}) => tableDesigner(schemaCtx, { conn: ref.conn, database: ref.database, schema: ref.schema, name: ref.name, focus }),
+  newTable: ({ conn: c, database, schema }) => tableDesigner(schemaCtx, { conn: c, database, schema }),
+
+  rename(ref) {
+    ddlActionDialog(schemaCtx, {
+      conn: ref.conn,
+      database: ref.database,
+      title: `Renomear ${KIND_LABEL[ref.kind] || ref.kind} ${ref.schema}.${ref.name}`,
+      message: ref.kind === "table" ? "" : "Views, procedures e funções que dependem do nome antigo não são atualizadas.",
+      input: { label: "Novo nome", value: ref.name },
+      build: (v) => {
+        if (!v) throw new Error("Informe o nome.");
+        return v === ref.name ? [] : [renameObjectSql(dialect(), ref, v)];
+      },
+      confirmLabel: "Renomear",
+      done: (v) => afterDdl({ conn: ref.conn, database: ref.database, schema: ref.schema, name: ref.name, renamed: { schema: ref.schema, name: v } }),
+    });
+  },
+
+  drop(ref) {
+    const label = KIND_LABEL[ref.kind] || ref.kind;
+    ddlActionDialog(schemaCtx, {
+      conn: ref.conn,
+      database: ref.database,
+      title: `Excluir ${label} ${ref.schema}.${ref.name}?`,
+      message: ref.kind === "table" ? "A tabela e todos os seus dados serão excluídos permanentemente." : `A ${label} será excluída permanentemente.`,
+      build: () => [dropObjectSql(dialect(), ref)],
+      confirmLabel: "Excluir",
+      danger: true,
+      done: () => afterDdl({ conn: ref.conn, database: ref.database, schema: ref.schema, name: ref.name, dropped: true }),
+    });
+  },
+
+  truncate(ref) {
+    ddlActionDialog(schemaCtx, {
+      conn: ref.conn,
+      database: ref.database,
+      title: `Esvaziar ${ref.schema}.${ref.name}?`,
+      message: "Todas as linhas serão apagadas e o IDENTITY volta ao valor inicial. Falha se outra tabela referenciar esta por chave estrangeira.",
+      build: () => [truncateSql(dialect(), ref)],
+      confirmLabel: "Esvaziar",
+      danger: true,
+      done: () => afterDdl({ conn: ref.conn, database: ref.database, schema: ref.schema, name: ref.name, dataOnly: true }),
+    });
+  },
+
+  renameItem(table, kind, itemName) {
+    quickSchemaAction(schemaCtx, {
+      ...tableArgs(table),
+      title: `Renomear ${ITEM_LABEL[kind]} ${itemName}`,
+      input: { label: "Novo nome", value: itemName },
+      confirmLabel: "Renomear",
+      mutate(model, v) {
+        if (!v) throw new Error("Informe o nome.");
+        const item = findItem(model, kind, itemName);
+        if (kind === "column") renameColumnRefs(model, item.name, v);
+        item.name = v;
+      },
+    });
+  },
+
+  dropItem(table, kind, itemName) {
+    quickSchemaAction(schemaCtx, {
+      ...tableArgs(table),
+      title: `Excluir ${ITEM_LABEL[kind]} ${itemName}?`,
+      message: kind === "column" ? "Os dados da coluna são perdidos. Índices, chaves e checks que usam a coluna também são excluídos." : "",
+      confirmLabel: "Excluir",
+      danger: true,
+      mutate(model) {
+        const item = findItem(model, kind, itemName);
+        if (kind === "column") dropColumn(model, item);
+        else item.dropped = true;
+      },
+    });
+  },
+};
+
+const tableArgs = (t) => ({ conn: t.conn, database: t.database, schema: t.schema, name: t.name });
+
+function findItem(model, kind, itemName) {
+  const list = kind === "column" ? model.columns : kind === "fk" ? model.fks : model.indexes;
+  const item = list.find((x) => (x.orig?.name ?? x.name) === itemName);
+  if (!item) throw new Error(`"${itemName}" não encontrado; atualize o Explorer (F5).`);
+  return item;
+}
+
 // ---------- Cabeçalho / bandeja ----------
 
 function renderHeader() {
@@ -814,6 +954,7 @@ export function setDbData(raw) {
       newConnection: newConnectionDialog,
       signOut,
       scriptMenu,
+      schema: schemaActions,
       dialect: () => dialect(),
       showMenu,
       copy,

@@ -6,6 +6,7 @@ import { initNotes, loadNotes } from "./js/components/notes.js";
 import { initHttp, setHttpData } from "./js/components/http.js";
 import { initJsonFormatter } from "./js/components/jsonFormatter.js";
 import { initDb, setDbData } from "./js/components/db.js";
+import { initRabbit, loadRabbit } from "./js/components/rabbit.js";
 import { initPomodoro, setPomodoroRenderCallback } from "./js/components/pomodoro.js";
 import { initSettings, updateSettingsUI } from "./js/components/settings.js";
 import { initWindowControls } from "./js/components/windowControls.js";
@@ -47,6 +48,9 @@ async function load() {
     console.error("db load failed", e);
     setDbData({});
   }
+
+  // rabbit.db (SQLite): conexões, estado da interface e gravações.
+  await loadRabbit();
 }
 
 function initGlobalShortcutListeners() {
@@ -74,6 +78,7 @@ function main() {
   initHttp();
   initJsonFormatter();
   initDb();
+  initRabbit();
   initPomodoro();
   setPomodoroRenderCallback(renderTasks);
   initSettings();

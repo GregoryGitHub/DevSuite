@@ -1,0 +1,841 @@
+/* =========================================================================
+   Notas: links [[ ]], propriedades (modo Zettelkasten), rodapé de links e grafo
+   ========================================================================= */
+
+.notes-app:not(.zettel) .zk-only {
+  display: none !important;
+}
+
+/* ---------- Link entre notas (chip atômico no editor) ---------- */
+
+.nt-editor a.nt-link {
+  padding: 0 2px;
+  border-radius: 4px;
+  color: var(--nt-yellow);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--nt-yellow) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.nt-editor a.nt-link:hover {
+  background: var(--nt-yellow-soft);
+  text-decoration-color: var(--nt-yellow);
+}
+
+/* Nota ainda não criada */
+.nt-editor a.nt-link[data-target] {
+  color: var(--nt-muted);
+  text-decoration-style: dashed;
+  text-decoration-color: rgba(var(--fg-rgb), 0.35);
+}
+
+/* Prévia ao passar o mouse */
+.nt-link-peek {
+  position: absolute;
+  z-index: 7;
+  width: 280px;
+  max-width: calc(100% - 8px);
+  padding: 10px 12px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 10px;
+  background: var(--nt-menu-bg);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, calc(0.4 * var(--shade-k)));
+  font-family: var(--nt-font);
+  pointer-events: none;
+  animation: ntPop 0.12s ease;
+}
+
+.nt-link-peek[hidden] {
+  display: none;
+}
+
+.nt-link-peek-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nt-text);
+}
+
+.nt-link-peek-folder {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--nt-muted);
+}
+
+.nt-link-peek-text {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--nt-text-2);
+}
+
+.nt-link-peek-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.nt-link-peek-tags span,
+.nt-chip.tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--syn-tag) 14%, transparent);
+  color: var(--syn-tag);
+  font-size: 11px;
+}
+
+/* ---------- Painel de propriedades ---------- */
+
+/* Abaixo do título: posicionado por noteProps.js (fora do contenteditable); o 1º bloco do
+   editor reserva o espaço com uma margem do tamanho do painel. */
+.nt-props {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--nt-sep);
+  font-family: var(--nt-font);
+  font-size: 12.5px;
+  color: var(--nt-text-2);
+}
+
+.nt-props[hidden] {
+  display: none;
+}
+
+.nt-editor.has-props > :first-child {
+  margin-bottom: calc(var(--nt-props-h, 0px) + 18px) !important;
+}
+
+.nt-props.collapsed {
+  padding-bottom: 4px;
+}
+
+.nt-props-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: var(--nt-muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nt-props-head:hover {
+  color: var(--nt-text);
+}
+
+.nt-props-chev {
+  width: 10px;
+  font-size: 9px;
+}
+
+.nt-props-zid {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(var(--fg-rgb), 0.06);
+  font-family: var(--nt-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.nt-props-summary {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--syn-tag);
+  font-weight: 400;
+}
+
+.nt-props-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 2px;
+  animation: ntFade 0.12s ease;
+}
+
+@keyframes ntFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.nt-props-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 28px;
+  padding: 1px 0;
+}
+
+.nt-props-key {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 7px;
+  width: 112px;
+  min-height: 26px;
+  color: var(--nt-muted);
+}
+
+.nt-props-key i {
+  width: 13px;
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.nt-props-val {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 26px;
+}
+
+.nt-props-chips {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  cursor: text;
+}
+
+.nt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.nt-chip.tag {
+  padding: 2px 4px 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nt-chip.alias {
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.07);
+  color: var(--nt-text);
+  font-size: 12px;
+}
+
+.nt-chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 9px;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.nt-chip-x:hover {
+  background: rgba(var(--fg-rgb), 0.12);
+  opacity: 1;
+}
+
+.nt-props-input,
+.nt-props-select {
+  min-width: 60px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.nt-props-chips .nt-props-input {
+  flex: 1;
+  min-width: 90px;
+}
+
+.nt-props-input.wide {
+  flex: 1;
+}
+
+.nt-props-input.key {
+  width: 100%;
+  min-width: 0;
+  padding: 0 4px;
+  color: var(--nt-muted);
+}
+
+.nt-props-input:hover,
+.nt-props-select:hover:not(:disabled) {
+  background: rgba(var(--fg-rgb), 0.04);
+}
+
+.nt-props-input:focus,
+.nt-props-select:focus {
+  border-color: var(--nt-sep-strong);
+  background: rgba(var(--fg-rgb), 0.04);
+}
+
+.nt-props-input::placeholder {
+  color: rgba(var(--fg-rgb), 0.32);
+}
+
+.nt-props-select {
+  cursor: pointer;
+}
+
+.nt-props-select option {
+  background: var(--nt-bg);
+  color: var(--nt-text);
+}
+
+.nt-props-del {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--nt-muted);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.nt-props-row:hover .nt-props-del {
+  opacity: 1;
+}
+
+.nt-props-del:hover {
+  background: rgba(var(--fg-rgb), 0.08);
+  color: var(--nt-text);
+}
+
+.nt-props-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nt-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nt-props-add:hover {
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--nt-text);
+}
+
+body:not(.desktop-mode) .nt-props-key {
+  width: 84px;
+}
+
+body:not(.desktop-mode) .nt-props-chips .nt-props-input:not(:placeholder-shown),
+body:not(.desktop-mode) .nt-props-chips .nt-chip ~ .nt-props-input {
+  min-width: 36px;
+}
+
+body:not(.desktop-mode) .nt-props-key span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* O editor não ocupa a altura toda quando há painéis em volta (o rodapé fica à vista). */
+.notes-app.zettel .nt-editor,
+.nt-editor-scroll:has(.nt-backlinks:not([hidden])) .nt-editor {
+  min-height: 45%;
+}
+
+/* ---------- Rodapé: Mencionada em / Links ---------- */
+
+.nt-backlinks {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 8px 0 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--nt-sep);
+  font-family: var(--nt-font);
+}
+
+.nt-backlinks[hidden] {
+  display: none;
+}
+
+.nt-bl-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--nt-muted);
+}
+
+.nt-bl-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.07);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.nt-bl-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px;
+}
+
+.nt-bl-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 9px;
+  background: rgba(var(--fg-rgb), 0.025);
+  color: var(--nt-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.nt-bl-item:hover {
+  border-color: var(--nt-sep-strong);
+  background: rgba(var(--fg-rgb), 0.055);
+}
+
+.nt-bl-item > i {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--nt-yellow);
+}
+
+.nt-bl-item.missing > i,
+.nt-bl-item.missing .nt-bl-title {
+  color: var(--nt-muted);
+}
+
+.nt-bl-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nt-bl-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.nt-bl-sub {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--nt-muted);
+}
+
+body:not(.desktop-mode) .nt-bl-list {
+  grid-template-columns: 1fr;
+}
+
+/* ---------- Grafo ---------- */
+
+.nt-graph-pane {
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  outline: none;
+}
+
+body.desktop-mode .notes-app[data-view="graph"] .nt-list-pane,
+body.desktop-mode .notes-app[data-view="graph"] .nt-editor-pane {
+  display: none;
+}
+
+body.desktop-mode .notes-app[data-view="graph"] .nt-graph-pane {
+  display: flex;
+  flex: 1;
+  border-left: 1px solid var(--nt-sep);
+}
+
+/* Na barra do topo, os comandos do editor não valem no grafo. */
+.notes-app[data-view="graph"] .nt-tb-editor .nt-tb-group,
+.notes-app[data-view="graph"] .nt-tb-editor [data-action="more"],
+.notes-app[data-view="graph"] .nt-tb-editor [data-action="graph-local"],
+.notes-app[data-view="graph"] .nt-tb-list [data-action="delete-note"] {
+  visibility: hidden;
+}
+
+body:not(.desktop-mode) .nt-graph-pane {
+  position: absolute;
+  inset: 0;
+  gap: 6px;
+  padding: 3px 3px 0;
+  animation: ntSlideIn 0.18s ease;
+}
+
+body:not(.desktop-mode) .notes-app[data-pane="graph"] .nt-graph-pane {
+  display: flex;
+}
+
+.ng-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--nt-sep);
+  font-family: var(--nt-font);
+  font-size: 12px;
+}
+
+body:not(.desktop-mode) .ng-bar {
+  padding: 2px 0 6px;
+}
+
+.ng-search-wrap {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 120px;
+  align-items: center;
+  gap: 7px;
+  max-width: 340px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  background: rgba(var(--fg-rgb), 0.06);
+  color: var(--nt-muted);
+}
+
+.ng-search-wrap:focus-within {
+  box-shadow: 0 0 0 2px var(--nt-yellow-soft);
+}
+
+.ng-search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--nt-text);
+  font: inherit;
+  outline: none;
+}
+
+.ng-count {
+  font-size: 11px;
+  color: var(--nt-muted);
+}
+
+.ng-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.ng-seg button,
+.ng-toggle,
+.ng-icon {
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--nt-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ng-seg button.active {
+  background: var(--nt-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, calc(0.18 * var(--shade-k)));
+  color: var(--nt-text);
+}
+
+.ng-select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nt-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ng-select option {
+  background: var(--nt-bg);
+  color: var(--nt-text);
+}
+
+.ng-select[hidden],
+.ng-toggle[hidden] {
+  display: none;
+}
+
+.ng-toggles {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.ng-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--nt-muted);
+}
+
+.ng-toggle i {
+  font-size: 10.5px;
+}
+
+.ng-toggle.active {
+  background: var(--nt-yellow-soft);
+  color: var(--nt-yellow);
+}
+
+.ng-toggle:hover:not(.active),
+.ng-icon:hover {
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.ng-spacer {
+  flex: 1;
+}
+
+.ng-icon {
+  width: 28px;
+  padding: 0;
+  color: var(--nt-muted);
+}
+
+.ng-icon.active {
+  background: var(--nt-yellow-soft);
+  color: var(--nt-yellow);
+}
+
+/* Painel de ajustes do grafo (títulos e forças), flutuando sobre o canvas. */
+.ng-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 240px;
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  background: var(--nt-menu-bg);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 9px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, calc(0.45 * var(--shade-k)));
+  font-size: 12px;
+  color: var(--nt-text);
+}
+
+.ng-panel[hidden] {
+  display: none;
+}
+
+.ng-panel-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nt-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 2px;
+}
+
+.ng-panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ng-panel-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ng-panel-val,
+.ng-panel-hint {
+  color: var(--nt-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ng-panel-hint {
+  font-size: 11px;
+  margin-top: -4px;
+}
+
+.ng-range {
+  width: 100%;
+  accent-color: var(--nt-yellow);
+  cursor: pointer;
+}
+
+.ng-panel-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+  height: 26px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nt-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ng-panel-reset:hover {
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+body:not(.desktop-mode) .ng-toggle span {
+  display: none;
+}
+
+.ng-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ng-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ng-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--nt-muted);
+  font-family: var(--nt-font);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.ng-empty[hidden] {
+  display: none;
+}
+
+.ng-empty i {
+  font-size: 34px;
+  opacity: 0.35;
+}
+
+.ng-empty small {
+  font-size: 11.5px;
+  opacity: 0.8;
+}
+
+.ng-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  max-width: calc(100% - 24px);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--nt-bg) 82%, transparent);
+  color: var(--nt-muted);
+  font-family: var(--nt-font);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.ng-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ng-leg i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ng-leg.tag i {
+  border-radius: 1px;
+  transform: rotate(45deg) scale(0.85);
+}
+
+.ng-leg-count {
+  color: var(--nt-text-2);
+}
+
+body:not(.desktop-mode) .ng-leg:not(.tag) {
+  display: none;
+}
+
+/* PDF: link impresso como texto sublinhado */
+#note-print a.nt-link {
+  color: inherit;
+  text-decoration: underline;
+}

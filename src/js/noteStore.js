@@ -1,5 +1,7 @@
 import { notesApi } from "./api.js";
 import { normalizeNote, normalizeNoteHtml, purgeExpiredTrash, noteLines, noteImageNames } from "./utils/noteContent.js";
+import { noteLinks, normalizeProps, propsEmpty, propsSearchText } from "./utils/zettel.js";
+import { normalizeFolderTree } from "./utils/folderTree.js";
 
 // Persistência das notas no notes.db (SQLite, src-tauri/src/notes_db.rs).
 //
@@ -20,9 +22,14 @@ function enqueue(op, onError) {
   return run;
 }
 
-/** Campos derivados do HTML que o banco guarda: título, prévia, texto da busca, imagens. */
+/**
+ * Campos derivados do HTML que o banco guarda: título, prévia, texto da busca, imagens e
+ * links [[ ]]; mais as propriedades do modo Zettelkasten (tags/apelidos também entram na busca).
+ */
 export function noteRecord(note) {
   const lines = noteLines(note.content);
+  const props = propsEmpty(note.props) ? null : normalizeProps(note.props);
+  const extra = propsSearchText(props);
   return {
     id: note.id,
     title: lines[0] || "",
@@ -33,8 +40,10 @@ export function noteRecord(note) {
     folder_id: note.folder_id ?? 0,
     deleted_at: note.deleted_at ?? null,
     content: note.content,
-    plain: lines.join("\n"),
+    plain: extra ? `${lines.join("\n")}\n${extra}` : lines.join("\n"),
     images: noteImageNames(note.content),
+    props,
+    links: noteLinks(note.content),
   };
 }
 
@@ -70,8 +79,16 @@ async function migrateLegacy() {
 export async function loadNoteStore() {
   const error = await migrateLegacy().catch((e) => String(e));
   const [metas, folders] = await Promise.all([notesApi.list(), notesApi.folders()]);
-  const notes = (Array.isArray(metas) ? metas : []).map((m) => ({ ...m, content: undefined, dirty: false, saved: true }));
-  return { notes, folders: Array.isArray(folders) ? folders : [], error };
+  const notes = (Array.isArray(metas) ? metas : []).map((m) => ({
+    ...m,
+    props: m.props && typeof m.props === "object" ? m.props : null,
+    links: Array.isArray(m.links) ? m.links : [],
+    content: undefined,
+    dirty: false,
+    saved: true,
+  }));
+  const list = (Array.isArray(folders) ? folders : []).map((f) => ({ id: f.id, name: f.name, parent_id: f.parent_id || 0 }));
+  return { notes, folders: normalizeFolderTree(list), error };
 }
 
 /** HTML da nota, buscado no banco na primeira vez que ela é aberta. */
@@ -114,8 +131,25 @@ export function deleteNotes(notes, onError) {
   if (ids.length) enqueue(() => notesApi.delete(ids), onError).catch(() => {});
 }
 
+/** Grava notas novas em lotes (uma transação por lote): importação de uma pasta. */
+export function saveNotesBulk(notes, onError, batch = 200) {
+  const runs = [];
+  for (let i = 0; i < notes.length; i += batch) {
+    const chunk = notes.slice(i, i + batch);
+    for (const n of chunk) n.dirty = false;
+    const records = chunk.map(noteRecord);
+    runs.push(
+      enqueue(() => notesApi.saveMany(records), onError).then(
+        () => chunk.forEach((n) => (n.saved = true)),
+        () => chunk.forEach((n) => (n.dirty = true)), // tenta de novo na próxima gravação
+      ),
+    );
+  }
+  return Promise.all(runs);
+}
+
 export function saveFolders(folders, onError) {
-  const copy = folders.map((f) => ({ id: f.id, name: f.name }));
+  const copy = folders.map((f) => ({ id: f.id, name: f.name, parent_id: f.parent_id || 0 }));
   enqueue(() => notesApi.saveFolders(copy), onError).catch(() => {});
 }
 

@@ -3,8 +3,10 @@
 mod db;
 mod http;
 mod note_images;
+mod note_pdf;
 mod notes_db;
 mod persist;
+mod rabbit;
 
 use std::fs;
 use std::path::PathBuf;
@@ -50,6 +52,9 @@ struct AppSettings {
     /// "system" | "light" | "dark"
     #[serde(default = "default_theme")]
     theme: String,
+    /// Notas: propriedades (front-matter), filtros relacionais e grafo.
+    #[serde(default)]
+    zettelkasten: bool,
 }
 
 fn default_theme() -> String {
@@ -384,12 +389,19 @@ fn main() {
         .manage(db::EntraTokens::default())
         .manage(http::HttpInflight::default())
         .manage(http::HttpCookies::default())
+        .manage(rabbit::RabbitDb::default())
+        .manage(rabbit::MgmtClients::default())
+        .manage(rabbit::RmqPasswords::default())
+        .manage(rabbit::RmqCaptures::default())
         .invoke_handler(tauri::generate_handler![
             load_todos,
             save_todos,
             notes_db::notes_list,
+            note_pdf::notes_print_pdf,
             notes_db::notes_get,
             notes_db::notes_save,
+            notes_db::notes_save_many,
+            notes_db::notes_scan_dir,
             notes_db::notes_set_meta,
             notes_db::notes_delete,
             notes_db::notes_search,
@@ -426,10 +438,34 @@ fn main() {
             db::db_introspect,
             db::db_table_info,
             db::db_ddl,
+            db::db_table_schema,
             db::db_execute,
             db::db_cancel,
             db::db_tx,
-            db::db_apply
+            db::db_apply,
+            rabbit::rmq_load,
+            rabbit::rmq_save_connections,
+            rabbit::rmq_save_meta,
+            rabbit::rmq_set_password,
+            rabbit::rmq_has_password,
+            rabbit::rmq_forget_password,
+            rabbit::rmq_http,
+            rabbit::rmq_test,
+            rabbit::rmq_open_mgmt,
+            rabbit::rmq_move,
+            rabbit::rmq_capture_start,
+            rabbit::rmq_capture_stop,
+            rabbit::rmq_capture_attach,
+            rabbit::rmq_captures,
+            rabbit::rmq_capture_rename,
+            rabbit::rmq_capture_delete,
+            rabbit::rmq_messages_query,
+            rabbit::rmq_message_get,
+            rabbit::rmq_messages_get,
+            rabbit::rmq_messages_delete,
+            rabbit::rmq_messages_delete_matching,
+            rabbit::rmq_messages_save,
+            rabbit::rmq_store_stats
         ])
         .register_asynchronous_uri_scheme_protocol(note_images::SCHEME, |ctx, request, responder| {
             // Leitura do arquivo fora da thread da UI.

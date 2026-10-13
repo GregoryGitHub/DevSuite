@@ -182,6 +182,72 @@ pub struct TableInfo {
     pub row_estimate: Option<i64>,
 }
 
+/// Estrutura completa de uma tabela para o diálogo "Modificar tabela" (o frontend gera o DDL).
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct TableSchema {
+    pub schema: String,
+    pub name: String,
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    pub fks: Vec<SchemaFk>,
+    pub checks: Vec<SchemaCheck>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SchemaColumn {
+    pub name: String,
+    /// Tipo completo ("nvarchar(200)", "decimal(18,2)").
+    #[serde(rename = "type")]
+    pub full_type: String,
+    pub nullable: bool,
+    pub identity: bool,
+    pub seed: i64,
+    pub increment: i64,
+    /// Expressão da coluna calculada (vazio = coluna comum).
+    pub computed: String,
+    /// Expressão do DEFAULT como o banco guarda ("((0))", "(getdate())").
+    pub default: String,
+    /// Nome da constraint de DEFAULT (para trocá-la ou remover a coluna).
+    pub default_name: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct IndexColumn {
+    pub name: String,
+    pub desc: bool,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SchemaIndex {
+    pub name: String,
+    /// "pk" | "unique" (constraint) | "uindex" (índice único) | "index" | "other" (columnstore, XML, espacial...)
+    pub kind: String,
+    pub clustered: bool,
+    pub columns: Vec<IndexColumn>,
+    pub include: Vec<String>,
+    pub filter: String,
+    /// Tipo como o banco descreve ("NONCLUSTERED COLUMNSTORE"...).
+    pub type_desc: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SchemaFk {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub ref_schema: String,
+    pub ref_table: String,
+    pub ref_columns: Vec<String>,
+    /// "NO ACTION" | "CASCADE" | "SET NULL" | "SET DEFAULT"
+    pub on_delete: String,
+    pub on_update: String,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SchemaCheck {
+    pub name: String,
+    pub definition: String,
+}
+
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct ServerInfo {
     pub product: String,
@@ -216,6 +282,12 @@ pub trait Session: Send {
     async fn introspect(&mut self, path: &ObjectPath) -> DbResult<Vec<ObjectNode>>;
     async fn table_info(&mut self, schema: &str, name: &str) -> DbResult<TableInfo>;
     async fn ddl(&mut self, path: &ObjectPath) -> DbResult<String>;
+
+    /// Estrutura editável da tabela (colunas, índices, FKs, checks). Bancos sem DDL editável
+    /// (MongoDB) ficam com o padrão.
+    async fn table_schema(&mut self, _schema: &str, _name: &str) -> DbResult<TableSchema> {
+        Err("Edição de estrutura não disponível para este banco".into())
+    }
 
     async fn begin(&mut self) -> DbResult<u32>;
     async fn commit(&mut self) -> DbResult<u32>;

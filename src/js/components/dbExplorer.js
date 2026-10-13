@@ -48,7 +48,8 @@ const fmtCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k
 
 /**
  * ctx: { data, conn(id), status(connId), ensureConnected(conn), disconnect(conn), openTable, openDdl,
- *        openConsole, editConnection, deleteConnection, duplicateConnection, showMenu, copy, saveUi, toast }
+ *        openConsole, editConnection, deleteConnection, duplicateConnection, showMenu, copy, saveUi, toast,
+ *        schema: { modify, newTable, rename, drop, truncate, renameItem, dropItem } }
  */
 export function createExplorer(ctx, { treeEl, searchEl }) {
   const nodes = new Map(); // key -> node
@@ -158,7 +159,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
       for (const [kind, label] of TABLE_GROUPS) {
         const items = list.filter((o) => o.kind === kind);
         if (!items.length) continue;
-        const group = node(`${k}/g:${kind}`, { kind: "group", label, connId: conn.id, count: items.length });
+        const group = node(`${k}/g:${kind}`, { kind: "group", label, group: kind, connId: conn.id, database: n.database, schema: n.schema, table: n.name, tableKind: n.kind, count: items.length });
         group.children = items.map(
           (o, i) =>
             node(`${group.key}/${i}:${o.name}`, {
@@ -171,6 +172,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
               schema: n.schema,
               name: kind === "trigger" ? o.name : n.name,
               table: n.name,
+              tableKind: n.kind,
             }).key,
         );
         group.children.length && keys.push(group.key);
@@ -398,7 +400,9 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
         { label: "Excluir conexão", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.deleteConnection(conn) },
       );
     } else if (n.kind === "database" || n.kind === "schema") {
-      items.push(consoleItem(n.database), { label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) }, { label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) });
+      items.push(consoleItem(n.database));
+      if (!isMongo(conn)) items.push({ label: "Nova tabela…", icon: "fa-solid fa-square-plus", run: () => ctx.schema.newTable({ conn, database: n.database, schema: n.schema || "dbo" }) });
+      items.push({ label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) }, { label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) });
     } else if (n.kind === "collection" || n.kind === "mview") {
       const ref = { ...objectRef(n), kind: n.kind === "mview" ? "view" : "collection" };
       const coll = /^[A-Za-z_$][\w$]*$/.test(n.name) ? `db.${n.name}` : `db.getCollection(${toShell(n.name)})`;
@@ -420,6 +424,13 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
         { label: "Ver DDL", icon: "fa-solid fa-code", run: () => ctx.openDdl(ref) },
         { label: "Gerar script…", icon: "fa-solid fa-scroll", run: () => ctx.scriptMenu(ref, x, y) },
         "sep",
+        n.kind === "table" ? { label: "Modificar tabela…", icon: "fa-solid fa-pen-ruler", run: () => ctx.schema.modify(ref) } : null,
+        n.kind === "table" ? { label: "Adicionar coluna…", icon: "fa-solid fa-plus", indent: true, run: () => ctx.schema.modify(ref, { section: "columns", add: true }) } : null,
+        n.kind === "table" ? { label: "Novo índice…", icon: "fa-solid fa-arrow-down-a-z", indent: true, run: () => ctx.schema.modify(ref, { section: "indexes", add: true }) } : null,
+        { label: "Renomear…", icon: "fa-solid fa-i-cursor", run: () => ctx.schema.rename(ref) },
+        n.kind === "table" ? { label: "Esvaziar tabela (TRUNCATE)…", icon: "fa-solid fa-eraser", run: () => ctx.schema.truncate(ref) } : null,
+        { label: n.kind === "table" ? "Excluir tabela…" : "Excluir view…", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.schema.drop(ref) },
+        "sep",
         { label: "Copiar nome qualificado", icon: "fa-regular fa-clipboard", run: () => ctx.copy(qn) },
         { label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) },
       );
@@ -437,9 +448,30 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
             }
           : null,
         { label: "Copiar nome qualificado", icon: "fa-regular fa-clipboard", run: () => ctx.copy(ctx.dialect(conn).qualified(n.schema, n.name)) },
+        "sep",
+        { label: "Renomear…", icon: "fa-solid fa-i-cursor", run: () => ctx.schema.rename(objectRef(n)) },
+        { label: n.kind === "procedure" ? "Excluir procedure…" : "Excluir função…", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.schema.drop(objectRef(n)) },
       );
     } else if (n.kind === "folder" || n.kind === "group" || n.kind === "sysfolder") {
+      const table = n.kind === "group" && n.tableKind === "table" && !isMongo(conn) ? { conn, database: n.database, schema: n.schema, name: n.table, kind: "table" } : null;
+      if (table && n.group === "column") items.push({ label: "Adicionar coluna…", icon: "fa-solid fa-plus", run: () => ctx.schema.modify(table, { section: "columns", add: true }) });
+      if (table && (n.group === "key" || n.group === "index")) items.push({ label: "Novo índice…", icon: "fa-solid fa-plus", run: () => ctx.schema.modify(table, { section: "indexes", add: true }) });
+      if (table && n.group === "fk") items.push({ label: "Nova chave estrangeira…", icon: "fa-solid fa-plus", run: () => ctx.schema.modify(table, { section: "fks", add: true }) });
+      if (n.kind === "folder" && n.key.endsWith("/f:table") && !isMongo(conn)) items.push({ label: "Nova tabela…", icon: "fa-solid fa-square-plus", run: () => ctx.schema.newTable({ conn, database: n.database, schema: n.schema }) });
       items.push({ label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) });
+    } else if (n.tableKind === "table" && ["column", "key", "index", "fk"].includes(n.kind) && !isMongo(conn)) {
+      const table = { conn, database: n.database, schema: n.schema, name: n.table, kind: "table" };
+      const what = { column: "coluna", key: "chave", index: "índice", fk: "chave estrangeira" }[n.kind];
+      items.push(
+        n.kind === "column"
+          ? { label: "Editar coluna…", icon: "fa-solid fa-pen-ruler", run: () => ctx.schema.modify(table, { section: "columns", column: n.label }) }
+          : { label: `Editar ${what}…`, icon: "fa-solid fa-pen-ruler", run: () => ctx.schema.modify(table, { section: n.kind === "fk" ? "fks" : "indexes", index: n.label }) },
+        { label: `Renomear ${what}…`, icon: "fa-solid fa-i-cursor", run: () => ctx.schema.renameItem(table, n.kind, n.label) },
+        { label: `Excluir ${what}…`, icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.schema.dropItem(table, n.kind, n.label) },
+        "sep",
+        { label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) },
+      );
+      if (n.detail) items.push({ label: "Copiar detalhe", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.detail) });
     } else {
       items.push({ label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) });
       if (n.detail) items.push({ label: "Copiar detalhe", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.detail) });
@@ -502,6 +534,9 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     } else if (e.key === "Enter" && cur) {
       e.preventDefault();
       activate(cur);
+    } else if (e.key === "F6" && (e.ctrlKey || e.metaKey) && cur?.kind === "table" && !isMongo(ctx.conn(cur.connId))) {
+      e.preventDefault();
+      ctx.schema.modify(objectRef(cur));
     } else if (e.key === "F5" && cur) {
       e.preventDefault();
       refresh(cur.key);
@@ -520,6 +555,13 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     render: schedule,
     refresh,
     refreshConnection: (connId) => refresh(`c:${connId}`),
+    /** Recarrega um schema (depois de DDL) e reabre o que estava aberto dentro dele. */
+    async refreshSchema(connId, database, schema) {
+      const key = `c:${connId}/d:${database}/s:${schema}`;
+      if (!nodes.has(key)) return;
+      await refresh(key);
+      await restoreExpanded(key);
+    },
     expandConnection: (connId) => toggle(`c:${connId}`, true),
     forgetConnection(connId) {
       const key = `c:${connId}`;

@@ -10,7 +10,7 @@ mod entra;
 mod mongo;
 mod mssql;
 mod mssql_meta;
-mod secrets;
+pub(crate) mod secrets;
 
 #[cfg(test)]
 mod it_tests;
@@ -227,6 +227,14 @@ pub async fn db_ddl(app: tauri::AppHandle, target: Target, path: ObjectPath) -> 
     let slot = slot(&app, &target.session_id);
     let mut guard = slot.lock().await;
     ready(&app, &target, &mut guard, false).await?.ddl(&path).await
+}
+
+/// Estrutura editável de uma tabela (diálogo "Modificar tabela"; o DDL é gerado no frontend).
+#[tauri::command]
+pub async fn db_table_schema(app: tauri::AppHandle, target: Target, schema: String, name: String) -> Result<TableSchema, String> {
+    let slot = slot(&app, &target.session_id);
+    let mut guard = slot.lock().await;
+    ready(&app, &target, &mut guard, false).await?.table_schema(&schema, &name).await
 }
 
 // ---------- Execução ----------

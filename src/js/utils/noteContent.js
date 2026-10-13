@@ -164,6 +164,26 @@ function cleanNode(node) {
       el = repl;
     }
 
+    // Link entre notas ([[ ]]): só os atributos do link, texto puro dentro.
+    if (el.tagName === "A" && el.classList.contains("nt-link")) {
+      const id = el.getAttribute("data-note");
+      const target = el.getAttribute("data-target");
+      const alias = el.hasAttribute("data-alias");
+      const text = el.textContent;
+      for (const attr of [...el.attributes]) el.removeAttribute(attr.name);
+      el.className = "nt-link";
+      el.setAttribute("contenteditable", "false");
+      if (id && /^\d+$/.test(id)) el.setAttribute("data-note", id);
+      else if (target?.trim()) el.setAttribute("data-target", target.trim());
+      else {
+        el.replaceWith(text);
+        continue;
+      }
+      if (alias) el.setAttribute("data-alias", "");
+      el.textContent = text;
+      continue;
+    }
+
     if (!ALLOWED_TAGS.has(el.tagName)) {
       el.replaceWith(...el.childNodes);
       continue;

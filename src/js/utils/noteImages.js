@@ -87,9 +87,10 @@ function resolvePath(baseDir, src) {
 /**
  * Stores the images of imported Markdown: relative/absolute paths (resolved against the
  * .md folder) and data: URLs become app files; remote URLs are kept. Unreadable images
- * are replaced by their alt text.
+ * are replaced by their alt text. `lookup(src)` may give the file's absolute path first
+ * (folder import: `![[x.png]]` of Obsidian points to a file anywhere in the vault).
  */
-export async function resolveMarkdownImages(html, baseDir) {
+export async function resolveMarkdownImages(html, baseDir, lookup = null) {
   if (!html.includes("<img")) return html;
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
@@ -100,7 +101,7 @@ export async function resolveMarkdownImages(html, baseDir) {
       try {
         const stored = /^data:image\//i.test(src)
           ? await storeImageBlob(await (await fetch(src)).blob())
-          : await storeImageFile(resolvePath(baseDir, src));
+          : await storeImageFile(lookup?.(src) || resolvePath(baseDir, src));
         img.setAttribute("src", stored.src);
         if (stored.width && stored.height) {
           img.setAttribute("width", stored.width);

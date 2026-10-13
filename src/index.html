@@ -32,11 +32,13 @@
     <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="notes.css" />
+    <link rel="stylesheet" href="zettel.css" />
     <link rel="stylesheet" href="http.css" />
     <link rel="stylesheet" href="json.css" />
     <link rel="stylesheet" href="tasks.css" />
     <link rel="stylesheet" href="code.css" />
     <link rel="stylesheet" href="db.css" />
+    <link rel="stylesheet" href="rabbit.css" />
   </head>
   <body>
     <main class="app">
@@ -214,6 +216,9 @@
                 <button class="nt-tb-btn" data-action="more" title="Importar / exportar Markdown">
                   <i class="fa-solid fa-ellipsis"></i>
                 </button>
+                <button class="nt-tb-btn zk-only" data-action="graph-local" title="Grafo local da nota (Ctrl+Shift+G abre o grafo)">
+                  <i class="fa-solid fa-circle-nodes"></i>
+                </button>
                 <div class="nt-tb-spacer" data-tauri-drag-region></div>
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
@@ -252,7 +257,15 @@
                 </div>
                 <h2 class="nt-large-title compact-only">Pastas</h2>
                 <div class="nt-sidebar-scroll">
-                  <div class="nt-section-label">No Meu PC</div>
+                  <div class="nt-section-label nt-section-head">
+                    <span>No Meu PC</span>
+                    <button class="nt-section-btn" data-action="import-folder" title="Importar pasta de Markdown (com subpastas)">
+                      <i class="fa-solid fa-file-import"></i>
+                    </button>
+                    <button class="nt-section-btn" data-action="new-folder" title="Nova pasta">
+                      <i class="fa-solid fa-folder-plus"></i>
+                    </button>
+                  </div>
                   <ul id="nt-folders" class="nt-folders"></ul>
                 </div>
                 <button class="nt-new-folder" data-action="new-folder">
@@ -295,6 +308,9 @@
                     <button class="nt-icon-btn" data-action="more" title="Importar / exportar Markdown">
                       <i class="fa-solid fa-ellipsis"></i>
                     </button>
+                    <button class="nt-icon-btn zk-only" data-action="graph-local" title="Grafo local da nota">
+                      <i class="fa-solid fa-circle-nodes"></i>
+                    </button>
                     <button class="nt-icon-btn" data-action="pin" title="Fixar nota">
                       <i class="fa-solid fa-thumbtack"></i>
                     </button>
@@ -309,7 +325,9 @@
                 </div>
                 <div id="nt-editor-scroll" class="nt-editor-scroll">
                   <div id="nt-editor-date" class="nt-editor-date"></div>
+                  <div id="nt-props" class="nt-props" hidden></div>
                   <div id="nt-editor" class="nt-editor" contenteditable="true" spellcheck="true"></div>
+                  <div id="nt-backlinks" class="nt-backlinks" hidden></div>
                   <div id="nt-table-tools" class="nt-table-tools" hidden>
                     <button data-tbl="row-above" title="Inserir linha acima"><i class="fa-solid fa-arrow-up"></i><span>Linha</span></button>
                     <button data-tbl="row-below" title="Inserir linha abaixo"><i class="fa-solid fa-arrow-down"></i><span>Linha</span></button>
@@ -335,6 +353,9 @@
                   <button class="nt-tool accent" data-action="new-note" title="Nova nota"><i class="fa-regular fa-pen-to-square"></i></button>
                 </div>
               </section>
+
+              <!-- Grafo das notas (modo Zettelkasten; montado por noteGraph.js) -->
+              <section id="nt-graph" class="nt-graph-pane" tabindex="-1"></section>
             </div>
 
             <!-- Popover de formatação (dropdown no desktop, folha inferior na bandeja) -->
@@ -737,6 +758,87 @@
           </div>
         </div>
 
+        <!-- VIEW: RABBITMQ (monitoramento, depuração e gravação das mensagens) -->
+        <div id="view-rabbit" class="view-panel" hidden>
+          <div id="rmq-app" class="notes-app db-app rmq-app">
+            <!-- Desktop: barra de ferramentas unificada -->
+            <header class="nt-toolbar desktop-only" data-tauri-drag-region>
+              <div class="nt-tb-editor db-toolbar" data-tauri-drag-region>
+                <div class="app-switch"></div>
+                <button class="nt-tb-btn" data-action="toggle-side" title="Mostrar/ocultar conexões">
+                  <i class="fa-solid fa-table-columns"></i>
+                </button>
+                <div class="nt-tb-title" data-tauri-drag-region>
+                  <strong id="rmq-tb-title">RabbitMQ</strong>
+                  <span id="rmq-tb-sub">Filas, mensagens e gravações</span>
+                </div>
+                <div class="nt-tb-group">
+                  <button class="nt-tb-btn" data-action="new-connection" title="Nova conexão"><i class="fa-solid fa-plus"></i></button>
+                  <button class="nt-tb-btn" data-action="refresh" title="Atualizar (F5)"><i class="fa-solid fa-rotate"></i></button>
+                  <button class="nt-tb-btn rmq-refresh-btn" data-action="refresh-menu" title="Atualização automática"><i class="fa-regular fa-clock"></i><span id="rmq-refresh-label"></span></button>
+                  <button class="nt-tb-btn" data-action="publish" title="Publicar mensagem (Ctrl+Shift+P)"><i class="fa-solid fa-paper-plane"></i></button>
+                  <button class="nt-tb-btn" data-action="new-capture" title="Nova gravação de mensagens"><i class="fa-solid fa-circle-dot"></i></button>
+                </div>
+                <button id="rmq-rec-pill" class="rmq-rec-pill" type="button" data-action="go-captures" hidden></button>
+                <div class="nt-tb-spacer" data-tauri-drag-region></div>
+                <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
+                  <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
+                  <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
+                </button>
+                <div class="win-caption">
+                  <button class="win-btn" data-action="minimize" title="Minimizar">
+                    <svg viewBox="0 0 10 10"><path d="M0 5.5h10" /></svg>
+                  </button>
+                  <button class="win-btn" data-action="maximize" title="Maximizar / Restaurar">
+                    <svg class="ic-max" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1" /></svg>
+                    <svg class="ic-restore" viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="7" height="7" rx="1" /><path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" /></svg>
+                  </button>
+                  <button class="win-btn win-close" data-action="close-desktop" title="Fechar (volta para a bandeja)">
+                    <svg viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <!-- Desktop: conexões/seções | conteúdo -->
+            <div class="db-body rmq-body desktop-only">
+              <aside class="db-explorer rmq-side">
+                <div class="db-pane-head">
+                  <span>Conexões</span>
+                  <span class="hx-flex"></span>
+                  <button class="hx-icon-btn" data-action="new-connection" title="Nova conexão"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <div id="rmq-tree" class="rmq-tree"></div>
+              </aside>
+              <div class="db-split-v" data-split="side" title="Arraste para redimensionar"></div>
+              <main id="rmq-main" class="rmq-main"></main>
+            </div>
+
+            <!-- Bandeja: resumo das conexões -->
+            <div class="db-compact compact-only">
+              <div class="nt-nav">
+                <h2 class="nt-large-title">RabbitMQ</h2>
+                <div class="nt-nav-actions">
+                  <button class="nt-icon-btn" data-action="new-connection" title="Nova conexão">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                  <button class="nt-icon-btn" data-action="desktop" title="Abrir no modo desktop">
+                    <i class="fa-solid fa-up-right-and-down-left-from-center"></i>
+                  </button>
+                </div>
+              </div>
+              <div id="rmq-compact-list" class="db-compact-list"></div>
+              <p class="db-compact-hint">Filas, mensagens e gravações abrem no modo desktop.</p>
+            </div>
+
+            <div id="rmq-menu" class="nt-menu" hidden></div>
+            <div id="rmq-modal" class="hx-modal-overlay" hidden></div>
+            <div id="rmq-toast" class="hx-toast" hidden></div>
+          </div>
+        </div>
+
         <!-- VIEW 5: SETTINGS -->
         <div id="view-settings" class="view-panel" hidden>
           <header class="app-header">
@@ -781,6 +883,17 @@
                 <span class="slider"></span>
               </label>
             </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Notas: modo Zettelkasten</span>
+                <span class="setting-desc">Propriedades (tags, apelidos, tipo), busca por tag: e type: e grafo das notas.</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-zettelkasten" />
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -801,6 +914,9 @@
         </button>
         <button class="bottom-tab" data-view="db" title="Banco de dados">
           <i class="fa-solid fa-database"></i>
+        </button>
+        <button class="bottom-tab" data-view="rabbit" title="RabbitMQ">
+          <i class="fa-solid fa-envelopes-bulk"></i>
         </button>
         <button class="bottom-tab" data-view="settings" title="Configurações">
           <i class="fa-solid fa-gear"></i>

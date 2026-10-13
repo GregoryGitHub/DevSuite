@@ -33,9 +33,11 @@ function loadMermaid() {
 
 const currentTheme = () => (document.documentElement.dataset.theme === "light" ? "default" : "dark");
 
-/** SVG do diagrama (as renderizações rodam uma por vez: o Mermaid não é reentrante). */
-export function renderMermaidSvg(source) {
-  const theme = currentTheme();
+/**
+ * SVG do diagrama (as renderizações rodam uma por vez: o Mermaid não é reentrante).
+ * theme: tema do Mermaid ("default" | "dark"); por padrão o da interface (o PDF usa sempre "default").
+ */
+export function renderMermaidSvg(source, theme = currentTheme()) {
   const key = `${theme}\0${source}`;
   if (cache.has(key)) return Promise.resolve(cache.get(key));
   const job = queue.then(async () => {

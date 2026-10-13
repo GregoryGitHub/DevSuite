@@ -101,4 +101,18 @@ assert.equal(guessCodeLang("def f():\n    return 1"), "python");
 assert.equal(guessCodeLang("só um texto"), null);
 assert.equal(guessCodeLang("{ não é json"), null);
 
+// --- colar Markdown nas Notas: o que vira formatação
+const { markdownKind, inlineMarkdown } = await import(base + "markdown.js");
+assert.equal(markdownKind("Esse `texto` de exemplo"), "inline");
+assert.equal(inlineMarkdown("Esse `texto` de exemplo"), "Esse <code>texto</code> de exemplo");
+assert.equal(markdownKind("**negrito** aqui"), "inline");
+assert.equal(markdownKind("# Título\nTexto"), "block");
+assert.equal(markdownKind("- a\n- b"), "block");
+assert.equal(markdownKind("```sql\nselect 1\n```"), "block");
+assert.equal(markdownKind("| a | b |\n|---|---|\n| 1 | 2 |"), "block");
+assert.equal(markdownKind("linha 1\nlinha 2"), null);
+assert.equal(markdownKind("- um item só\noutra linha"), null);
+assert.equal(markdownKind("2*3*4 e snake_case_name"), null);
+assert.equal(markdownKind("https://x.com/a_b_c"), null);
+
 console.log("code-block: ok");

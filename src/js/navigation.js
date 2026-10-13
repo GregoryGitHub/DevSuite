@@ -6,6 +6,7 @@ const PANELS = {
   http: document.getElementById("view-http"),
   json: document.getElementById("view-json"),
   db: document.getElementById("view-db"),
+  rabbit: document.getElementById("view-rabbit"),
   settings: document.getElementById("view-settings"),
 };
 

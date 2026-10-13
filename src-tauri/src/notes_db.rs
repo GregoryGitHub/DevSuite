@@ -50,6 +50,12 @@ pub struct NoteMeta {
     /// Preenchido quando a nota está em "Apagadas Recentemente".
     #[serde(default)]
     pub deleted_at: Option<u64>,
+    /// Propriedades do modo Zettelkasten (front-matter): objeto JSON definido em zettel.js.
+    #[serde(default)]
+    pub props: serde_json::Value,
+    /// Links `[[ ]]` da nota: ids (número) ou títulos ainda sem nota (texto).
+    #[serde(default)]
+    pub links: Vec<serde_json::Value>,
 }
 
 /// Nota completa enviada pelo JS ao salvar/importar.
@@ -67,10 +73,13 @@ pub struct NoteSave {
     pub images: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Folder {
     pub id: u64,
     pub name: String,
+    /// Pasta-mãe (0 = nível superior). Subpastas podem ter qualquer profundidade.
+    #[serde(default)]
+    pub parent_id: u64,
 }
 
 /// Conteúdo dos JSON antigos, devolvido ao JS para normalizar e importar.
@@ -117,6 +126,15 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE OF plain ON notes BEGIN
 END;
 ";
 
+/// Migrações por `PRAGMA user_version` (cada índice = versão alcançada após rodar).
+const MIGRATIONS: &[&str] = &[
+    // v1: propriedades (front-matter) e links entre notas.
+    "ALTER TABLE notes ADD COLUMN props TEXT NOT NULL DEFAULT '';
+     ALTER TABLE notes ADD COLUMN links TEXT NOT NULL DEFAULT '';",
+    // v2: subpastas.
+    "ALTER TABLE folders ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0;",
+];
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     init(&conn)?;
@@ -128,7 +146,20 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     // transação pode se perder numa queda de energia, nunca o arquivo).
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
-    conn.execute_batch(SCHEMA)
+    conn.execute_batch(SCHEMA)?;
+    let version: usize = conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? as usize;
+    for (i, sql) in MIGRATIONS.iter().enumerate().skip(version) {
+        conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1))?;
+    }
+    Ok(())
+}
+
+fn json_text(v: &serde_json::Value) -> String {
+    if v.is_null() { String::new() } else { v.to_string() }
+}
+
+fn parse_json(s: &str) -> serde_json::Value {
+    if s.is_empty() { serde_json::Value::Null } else { serde_json::from_str(s).unwrap_or(serde_json::Value::Null) }
 }
 
 fn now_ms() -> u64 {
@@ -157,6 +188,11 @@ fn meta_row(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
         pinned: r.get(5)?,
         folder_id: r.get::<_, i64>(6)? as u64,
         deleted_at: r.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+        props: parse_json(&r.get::<_, String>(8)?),
+        links: match parse_json(&r.get::<_, String>(9)?) {
+            serde_json::Value::Array(a) => a,
+            _ => Vec::new(),
+        },
     })
 }
 
@@ -167,7 +203,7 @@ pub fn list(conn: &Connection, now: u64) -> rusqlite::Result<Vec<NoteMeta>> {
         params![i(now.saturating_sub(TRASH_RETENTION_MS))],
     )?;
     let mut st = conn.prepare(
-        "SELECT id, title, preview, created_at, updated_at, pinned, folder_id, deleted_at FROM notes ORDER BY updated_at DESC",
+        "SELECT id, title, preview, created_at, updated_at, pinned, folder_id, deleted_at, props, links FROM notes ORDER BY updated_at DESC",
     )?;
     let rows = st.query_map([], meta_row)?;
     rows.collect()
@@ -180,14 +216,15 @@ pub fn get_content(conn: &Connection, id: u64) -> rusqlite::Result<Option<String
 fn upsert(conn: &Connection, n: &NoteSave, replace: bool) -> rusqlite::Result<usize> {
     let m = &n.meta;
     let sql = if replace {
-        "INSERT INTO notes (id, title, preview, content, plain, images, created_at, updated_at, pinned, folder_id, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        "INSERT INTO notes (id, title, preview, content, plain, images, created_at, updated_at, pinned, folder_id, deleted_at, props, links)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(id) DO UPDATE SET title = excluded.title, preview = excluded.preview, content = excluded.content,
            plain = excluded.plain, images = excluded.images, created_at = excluded.created_at, updated_at = excluded.updated_at,
-           pinned = excluded.pinned, folder_id = excluded.folder_id, deleted_at = excluded.deleted_at"
+           pinned = excluded.pinned, folder_id = excluded.folder_id, deleted_at = excluded.deleted_at,
+           props = excluded.props, links = excluded.links"
     } else {
-        "INSERT OR IGNORE INTO notes (id, title, preview, content, plain, images, created_at, updated_at, pinned, folder_id, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+        "INSERT OR IGNORE INTO notes (id, title, preview, content, plain, images, created_at, updated_at, pinned, folder_id, deleted_at, props, links)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
     };
     conn.execute(
         sql,
@@ -203,12 +240,23 @@ fn upsert(conn: &Connection, n: &NoteSave, replace: bool) -> rusqlite::Result<us
             m.pinned,
             i(m.folder_id),
             m.deleted_at.map(i),
+            json_text(&m.props),
+            if m.links.is_empty() { String::new() } else { serde_json::Value::Array(m.links.clone()).to_string() },
         ],
     )
 }
 
 pub fn save(conn: &Connection, n: &NoteSave) -> rusqlite::Result<()> {
     upsert(conn, n, true).map(|_| ())
+}
+
+/// Grava várias notas numa transação só (importação de uma pasta de Markdown).
+pub fn save_many(conn: &mut Connection, notes: &[NoteSave]) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    for n in notes {
+        upsert(&tx, n, true)?;
+    }
+    tx.commit()
 }
 
 /// Atualiza só fixada/pasta/lixeira/data (fixar, mover, apagar, restaurar) sem tocar no HTML.
@@ -257,8 +305,10 @@ pub fn search(conn: &Connection, query: &str) -> rusqlite::Result<Vec<u64>> {
 }
 
 pub fn folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
-    let mut st = conn.prepare("SELECT id, name FROM folders ORDER BY position, id")?;
-    let rows = st.query_map([], |r| Ok(Folder { id: r.get::<_, i64>(0)? as u64, name: r.get(1)? }))?;
+    let mut st = conn.prepare("SELECT id, name, parent_id FROM folders ORDER BY position, id")?;
+    let rows = st.query_map([], |r| {
+        Ok(Folder { id: r.get::<_, i64>(0)? as u64, name: r.get(1)?, parent_id: r.get::<_, i64>(2)? as u64 })
+    })?;
     rows.collect()
 }
 
@@ -267,9 +317,9 @@ pub fn save_folders(conn: &mut Connection, folders: &[Folder]) -> rusqlite::Resu
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM folders", [])?;
     {
-        let mut st = tx.prepare("INSERT INTO folders (id, name, position) VALUES (?1, ?2, ?3)")?;
+        let mut st = tx.prepare("INSERT INTO folders (id, name, position, parent_id) VALUES (?1, ?2, ?3, ?4)")?;
         for (pos, f) in folders.iter().enumerate() {
-            st.execute(params![i(f.id), f.name, pos as i64])?;
+            st.execute(params![i(f.id), f.name, pos as i64, i(f.parent_id)])?;
         }
     }
     tx.commit()
@@ -297,9 +347,9 @@ pub fn import(conn: &mut Connection, notes: &[NoteSave], folders: &[Folder]) -> 
         added += upsert(&tx, n, false)?;
     }
     if !folders.is_empty() {
-        let mut st = tx.prepare("INSERT OR IGNORE INTO folders (id, name, position) VALUES (?1, ?2, ?3)")?;
+        let mut st = tx.prepare("INSERT OR IGNORE INTO folders (id, name, position, parent_id) VALUES (?1, ?2, ?3, ?4)")?;
         for (pos, f) in folders.iter().enumerate() {
-            st.execute(params![i(f.id), f.name, pos as i64])?;
+            st.execute(params![i(f.id), f.name, pos as i64, i(f.parent_id)])?;
         }
     }
     mark_migrated(&tx)?;
@@ -361,6 +411,11 @@ pub async fn notes_get(app: tauri::AppHandle, id: u64) -> Result<Option<String>,
 #[tauri::command]
 pub async fn notes_save(app: tauri::AppHandle, note: NoteSave) -> Result<(), String> {
     with_db(app, move |c| save(c, &note)).await
+}
+
+#[tauri::command]
+pub async fn notes_save_many(app: tauri::AppHandle, notes: Vec<NoteSave>) -> Result<(), String> {
+    with_db(app, move |c| save_many(c, &notes)).await
 }
 
 #[tauri::command]
@@ -431,6 +486,108 @@ pub async fn notes_import(app: tauri::AppHandle, notes: Vec<NoteSave>, folders: 
         }
     }
     Ok(added)
+}
+
+// ---------- Importar uma pasta de Markdown ----------
+
+const MD_EXTS: &[&str] = &["md", "markdown", "mdown", "mkd"];
+const MAX_MD_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SCAN_FILES: usize = 50_000;
+
+/// Arquivo encontrado; `rel` usa "/" e é relativo à pasta escolhida.
+#[derive(Serialize, Debug)]
+pub struct ScannedFile {
+    pub rel: String,
+    pub path: String,
+}
+
+#[derive(Serialize, Debug)]
+pub struct ScannedNote {
+    pub rel: String,
+    pub path: String,
+    pub text: String,
+    /// Data de modificação do arquivo (ms), usada como data da nota.
+    pub modified: u64,
+}
+
+/// Conteúdo de uma pasta: notas (.md com o texto) e os demais arquivos (imagens/anexos,
+/// para resolver `![](../anexos/x.png)` e `![[x.png]]` do Obsidian).
+#[derive(Serialize, Debug, Default)]
+pub struct DirScan {
+    pub name: String,
+    pub notes: Vec<ScannedNote>,
+    pub files: Vec<ScannedFile>,
+    /// Arquivos .md ignorados (grandes demais ou ilegíveis).
+    pub skipped: Vec<String>,
+}
+
+/// Percorre `root` recursivamente, sem seguir links e pulando pastas ocultas
+/// (.obsidian, .git, .trash...) e node_modules.
+pub fn scan_markdown_dir(root: &Path) -> std::io::Result<DirScan> {
+    let mut scan = DirScan {
+        name: root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        ..Default::default()
+    };
+    let mut stack = vec![(root.to_path_buf(), String::new())];
+    let mut seen = 0usize;
+    while let Some((dir, prefix)) = stack.pop() {
+        let mut entries: Vec<_> = fs::read_dir(&dir)?.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(ft) = entry.file_type() else { continue };
+            let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            if ft.is_dir() {
+                if name != "node_modules" {
+                    stack.push((entry.path(), rel));
+                }
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
+            seen += 1;
+            if seen > MAX_SCAN_FILES {
+                return Err(std::io::Error::other(format!("a pasta tem mais de {MAX_SCAN_FILES} arquivos")));
+            }
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let path_str = path.to_string_lossy().into_owned();
+            if MD_EXTS.contains(&ext.as_str()) {
+                let too_big = entry.metadata().map(|m| m.len() > MAX_MD_BYTES).unwrap_or(true);
+                match (too_big, fs::read(&path)) {
+                    (false, Ok(bytes)) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
+                        let modified = entry
+                            .metadata()
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        scan.notes.push(ScannedNote { rel, path: path_str, text, modified });
+                    }
+                    _ => scan.skipped.push(rel),
+                }
+            } else {
+                scan.files.push(ScannedFile { rel, path: path_str });
+            }
+        }
+    }
+    scan.notes.sort_by(|a, b| a.rel.cmp(&b.rel));
+    Ok(scan)
+}
+
+/// Lê uma pasta de Markdown escolhida pelo usuário (fora da thread da interface).
+#[tauri::command]
+pub async fn notes_scan_dir(dir: String) -> Result<DirScan, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_markdown_dir(Path::new(&dir)).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Apaga imagens que nenhuma nota usa (lista de nomes vem do banco).
@@ -550,10 +707,12 @@ mod tests {
     #[test]
     fn folders_replace_in_order() {
         let mut c = db();
-        save_folders(&mut c, &[Folder { id: 5, name: "B".into() }, Folder { id: 3, name: "A".into() }]).unwrap();
-        assert_eq!(folders(&c).unwrap().iter().map(|f| f.id).collect::<Vec<_>>(), vec![5, 3]);
-        save_folders(&mut c, &[Folder { id: 3, name: "A2".into() }]).unwrap();
-        assert_eq!(folders(&c).unwrap(), vec![Folder { id: 3, name: "A2".into() }]);
+        save_folders(&mut c, &[Folder { id: 5, name: "B".into(), parent_id: 0 }, Folder { id: 3, name: "A".into(), parent_id: 5 }]).unwrap();
+        let got = folders(&c).unwrap();
+        assert_eq!(got.iter().map(|f| f.id).collect::<Vec<_>>(), vec![5, 3]);
+        assert_eq!(got[1].parent_id, 5);
+        save_folders(&mut c, &[Folder { id: 3, name: "A2".into(), parent_id: 0 }]).unwrap();
+        assert_eq!(folders(&c).unwrap(), vec![Folder { id: 3, name: "A2".into(), parent_id: 0 }]);
     }
 
     #[test]
@@ -561,7 +720,7 @@ mod tests {
         let mut c = db();
         assert!(!is_migrated(&c).unwrap());
         save(&c, &note(1, "editada depois")).unwrap();
-        let added = import(&mut c, &[note(1, "versão antiga"), note(2, "nova")], &[Folder { id: 9, name: "P".into() }]).unwrap();
+        let added = import(&mut c, &[note(1, "versão antiga"), note(2, "nova")], &[Folder { id: 9, name: "P".into(), parent_id: 0 }]).unwrap();
         assert_eq!(added, 1);
         assert_eq!(get_content(&c, 1).unwrap().as_deref(), Some("<p>editada depois</p>"));
         assert_eq!(folders(&c).unwrap().len(), 1);
@@ -582,6 +741,68 @@ mod tests {
         let (count, keep) = image_names(&c).unwrap();
         assert_eq!(count, 2);
         assert_eq!(keep, ["x.png", "y.jpg", "z.gif"].into_iter().map(String::from).collect());
+    }
+
+    #[test]
+    fn old_database_is_migrated() {
+        let c = Connection::open_in_memory().unwrap();
+        // Esquema anterior às propriedades (user_version 0, sem props/links).
+        c.execute_batch(SCHEMA).unwrap();
+        c.execute("INSERT INTO notes (id, title, content, plain) VALUES (1, 'T', '<h1>T</h1>', 'T')", []).unwrap();
+        init(&c).unwrap();
+        init(&c).unwrap(); // idempotente
+        let v: i64 = c.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v as usize, MIGRATIONS.len());
+        let n = &list(&c, now_ms()).unwrap()[0];
+        assert!(n.props.is_null() && n.links.is_empty());
+        // Pastas antigas ficam no nível superior.
+        c.execute("INSERT INTO folders (id, name) VALUES (4, 'Velha')", []).unwrap();
+        assert_eq!(folders(&c).unwrap()[0].parent_id, 0);
+    }
+
+    #[test]
+    fn save_many_writes_all_in_one_transaction() {
+        let mut c = db();
+        save_many(&mut c, &[note(1, "um"), note(2, "dois"), note(3, "três")]).unwrap();
+        assert_eq!(list(&c, now_ms()).unwrap().len(), 3);
+        assert_eq!(search(&c, "tres").unwrap(), vec![3]);
+    }
+
+    #[test]
+    fn scan_markdown_dir_walks_subfolders() {
+        let root = std::env::temp_dir().join(format!("todors-scan-{}", now_ms()));
+        fs::create_dir_all(root.join("Projetos/Rust")).unwrap();
+        fs::create_dir_all(root.join("Vazia")).unwrap();
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::create_dir_all(root.join("anexos")).unwrap();
+        fs::write(root.join("Inicio.md"), "\u{feff}# Início").unwrap();
+        fs::write(root.join("Projetos/Rust/Tauri.markdown"), "# Tauri").unwrap();
+        fs::write(root.join(".obsidian/config.md"), "x").unwrap();
+        fs::write(root.join("anexos/a.png"), [0u8; 4]).unwrap();
+        let scan = scan_markdown_dir(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        let rels: Vec<_> = scan.notes.iter().map(|n| n.rel.as_str()).collect();
+        assert_eq!(rels, vec!["Inicio.md", "Projetos/Rust/Tauri.markdown"]);
+        assert_eq!(scan.notes[0].text, "# Início"); // sem BOM
+        assert_eq!(scan.files.iter().map(|f| f.rel.as_str()).collect::<Vec<_>>(), vec!["anexos/a.png"]);
+        assert!(scan.name.starts_with("todors-scan-"));
+    }
+
+    #[test]
+    fn props_and_links_round_trip_and_survive_set_meta() {
+        let mut c = db();
+        let mut n = note(1, "Zettel");
+        n.meta.props = serde_json::json!({ "zid": "202610081530", "tags": ["rust", "sqlite"] });
+        n.meta.links = vec![serde_json::json!(2), serde_json::json!("Sem nota")];
+        save(&c, &n).unwrap();
+        let got = list(&c, now_ms()).unwrap().remove(0);
+        assert_eq!(got.props, n.meta.props);
+        assert_eq!(got.links, n.meta.links);
+        set_meta(&mut c, &[NoteMeta { id: 1, pinned: true, updated_at: 3, ..Default::default() }]).unwrap();
+        let got = list(&c, now_ms()).unwrap().remove(0);
+        assert!(got.pinned);
+        assert_eq!(got.props, n.meta.props);
+        assert_eq!(got.links, n.meta.links);
     }
 
     #[test]

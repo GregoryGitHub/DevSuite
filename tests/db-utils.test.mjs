@@ -125,5 +125,97 @@ assert.equal(r.patch.host, "h.example");
 assert.equal(r.patch.port, 1444);
 assert.equal(r.patch.encrypt, "off");
 assert.equal(r.password, "x");
+// --- sqlDdl (Modificar tabela)
+{
+  const ddl = await import(base + "sqlDdl.js");
+  assert.equal(ddl.stripParens("((0))"), "0");
+  assert.equal(ddl.stripParens("(a) + (b)"), "(a) + (b)");
+  assert.deepEqual(ddl.parseColumnList("Id, [Nome, Completo] DESC ,x asc"), [{ name: "Id", desc: false }, { name: "Nome, Completo", desc: true }, { name: "x", desc: false }]);
+  assert.equal(ddl.formatColumnList([{ name: "Id", desc: false }, { name: "a b", desc: true }]), "Id, [a b] DESC");
+  assert.ok(ddl.validType("decimal(18, 2)") && ddl.validType("nvarchar(max)") && ddl.validType("double precision"));
+  assert.ok(!ddl.validType("int; DROP TABLE x") && !ddl.validType("int)--"));
+
+  const schema = {
+    schema: "dbo",
+    name: "pedidos",
+    columns: [
+      { name: "id", type: "int", nullable: false, identity: true, seed: 1, increment: 1, computed: "", default: "", default_name: "" },
+      { name: "cliente", type: "nvarchar(100)", nullable: true, identity: false, seed: 1, increment: 1, computed: "", default: "", default_name: "" },
+      { name: "qtd", type: "int", nullable: false, identity: false, seed: 1, increment: 1, computed: "", default: "((1))", default_name: "DF_pedidos_qtd" },
+      { name: "obs", type: "nvarchar(max)", nullable: true, identity: false, seed: 1, increment: 1, computed: "", default: "", default_name: "" },
+    ],
+    indexes: [
+      { name: "PK_pedidos", kind: "pk", clustered: true, columns: [{ name: "id", desc: false }], include: [], filter: "", type_desc: "CLUSTERED" },
+      { name: "IX_pedidos_cliente", kind: "index", clustered: false, columns: [{ name: "cliente", desc: false }], include: ["qtd"], filter: "", type_desc: "NONCLUSTERED" },
+    ],
+    fks: [],
+    checks: [{ name: "CK_qtd", definition: "([qtd]>(0))" }],
+  };
+  const d = mssql;
+  // Sem mudanças: nenhum comando.
+  assert.deepEqual(ddl.buildSchemaChanges(d, ddl.fromSchema(schema)), []);
+
+  let m = ddl.fromSchema(schema);
+  const [, cliente, qtd, obs] = m.columns;
+  cliente.name = "cliente_nome";
+  ddl.renameColumnRefs(m, "cliente", "cliente_nome");
+  qtd.type = "bigint"; // índice, default e check dependem dela: saem e voltam
+  ddl.dropColumn(m, obs);
+  const c = ddl.newColumn(m);
+  Object.assign(c, { name: "criado", type: "datetime2(7)", nullable: false, default: "sysutcdatetime()" });
+  m.columns.push(c);
+  m.name = "pedido";
+  let sql = ddl.buildSchemaChanges(d, m);
+  assert.deepEqual(sql, [
+    "ALTER TABLE [dbo].[pedidos] DROP CONSTRAINT [CK_qtd]",
+    "DROP INDEX [IX_pedidos_cliente] ON [dbo].[pedidos]",
+    "ALTER TABLE [dbo].[pedidos] DROP CONSTRAINT [DF_pedidos_qtd]",
+    "ALTER TABLE [dbo].[pedidos] DROP COLUMN [obs]",
+    "EXEC sp_rename N'[dbo].[pedidos].[cliente]', N'cliente_nome', 'COLUMN'",
+    "ALTER TABLE [dbo].[pedidos] ALTER COLUMN [qtd] bigint NOT NULL",
+    "ALTER TABLE [dbo].[pedidos] ADD CONSTRAINT [DF_pedidos_qtd] DEFAULT (1) FOR [qtd]",
+    "ALTER TABLE [dbo].[pedidos] ADD [criado] datetime2(7) NOT NULL CONSTRAINT [DF_pedido_criado] DEFAULT (sysutcdatetime())",
+    "CREATE NONCLUSTERED INDEX [IX_pedidos_cliente] ON [dbo].[pedidos] ([cliente_nome]) INCLUDE ([qtd])",
+    "ALTER TABLE [dbo].[pedidos] ADD CONSTRAINT [CK_qtd] CHECK ([qtd]>(0))",
+    "EXEC sp_rename N'[dbo].[pedidos]', N'pedido'",
+  ]);
+  assert.deepEqual(ddl.validate(m), []);
+
+  // Excluir a coluna leva o índice junto; restaurar devolve.
+  m = ddl.fromSchema(schema);
+  ddl.dropColumn(m, m.columns[1]);
+  assert.ok(m.indexes[1].dropped);
+  ddl.restoreColumn(m, m.columns[1]);
+  assert.ok(!m.indexes[1].dropped);
+
+  // Só renomear o índice usa sp_rename; PK nova via checkbox.
+  m = ddl.fromSchema(schema);
+  m.indexes[1].name = "IX_cli";
+  ddl.togglePk(m, m.columns[0], false);
+  assert.ok(m.indexes[0].dropped);
+  sql = ddl.buildSchemaChanges(d, m);
+  assert.deepEqual(sql, ["ALTER TABLE [dbo].[pedidos] DROP CONSTRAINT [PK_pedidos]", "EXEC sp_rename N'[dbo].[pedidos].[IX_pedidos_cliente]', N'IX_cli', 'INDEX'"]);
+
+  // Nova tabela.
+  m = ddl.newTableModel("dbo");
+  m.name = "itens";
+  m.columns.push(Object.assign(ddl.newColumn(m), { name: "pedido_id", type: "int", nullable: false }));
+  const fk = ddl.newFk();
+  Object.assign(fk, { columns: ["pedido_id"], ref_table: "pedidos", ref_columns: ["id"], on_delete: "CASCADE" });
+  m.fks.push(fk);
+  assert.deepEqual(ddl.buildSchemaChanges(d, m), [
+    `CREATE TABLE [dbo].[itens]
+(
+    [Id] int IDENTITY(1, 1) NOT NULL,
+    [pedido_id] int NOT NULL,
+    CONSTRAINT [PK_itens] PRIMARY KEY CLUSTERED ([Id]),
+    CONSTRAINT [FK_itens_pedidos] FOREIGN KEY ([pedido_id]) REFERENCES [dbo].[pedidos] ([id]) ON DELETE CASCADE
+)`,
+  ]);
+  m.columns[0].nullable = true;
+  assert.ok(ddl.validate(m).some((e) => /chave primária/.test(e)));
+  assert.equal(ddl.renameObjectSql(d, { schema: "dbo", name: "a'b" }, "c"), "EXEC sp_rename N'[dbo].[a''b]', N'c'");
+}
+
 console.log("db utils: ok");
 

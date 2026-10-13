@@ -22,7 +22,8 @@
         "skipTaskbar": true,
         "alwaysOnTop": true,
         "center": false,
-        "maximizable": false
+        "maximizable": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

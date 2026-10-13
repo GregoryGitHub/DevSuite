@@ -1,5 +1,6 @@
 import { escapeHtml } from "./noteContent.js";
 import { normalizeCodeLang } from "./highlight.js";
+import { linkHtml, splitLinkText, splitFrontMatter } from "./zettel.js";
 
 // Markdown <-> note HTML (the subset the note editor produces, see noteContent.js).
 // Export: h1-h3, p, b/i/s/u, code, pre, blockquote, lists (bullet/numbered/checklist,
@@ -75,6 +76,14 @@ function inline(node, ctx) {
         break;
       case "CODE":
         out += codeSpan(child.textContent);
+        break;
+      case "A":
+        if (child.classList.contains("nt-link")) {
+          const clean = (t) => t.replace(/[[\]|]/g, "").trim();
+          const title = clean(ctx.linkTitle(child) || child.getAttribute("data-target") || child.textContent);
+          const alias = child.hasAttribute("data-alias") ? clean(child.textContent) : "";
+          out += alias && alias !== title ? `[[${title}|${alias}]]` : `[[${title}]]`;
+        } else out += inline(child, ctx);
         break;
       case "IMG": {
         const src = ctx.imageSrc(child.getAttribute("src") || "");
@@ -207,11 +216,12 @@ function blocks(parent, ctx) {
 /**
  * Converts note HTML to Markdown.
  * imageSrc maps each <img> src to the path written in the Markdown ("" drops the image).
+ * linkTitle gives the current title of a note link (<a class="nt-link">), written as [[Title]].
  */
-export function htmlToMarkdown(html, { imageSrc = (src) => src } = {}) {
+export function htmlToMarkdown(html, { imageSrc = (src) => src, linkTitle = () => "" } = {}) {
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
-  return blocks(tpl.content, { imageSrc }).trim() + "\n";
+  return blocks(tpl.content, { imageSrc, linkTitle }).trim() + "\n";
 }
 
 // ======================= Markdown -> HTML =======================
@@ -250,6 +260,8 @@ function unwrapDestination(dest) {
   return d.startsWith("<") && d.endsWith(">") ? d.slice(1, -1) : d;
 }
 
+const EMBED_IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
+
 /** Inline Markdown -> HTML. */
 export function inlineMarkdown(text) {
   const slots = [];
@@ -259,6 +271,19 @@ export function inlineMarkdown(text) {
     // Code spans first: nothing inside them is Markdown.
     .replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (_, __, code) => hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, "$1"))}</code>`))
     .replace(/\\([\\`*_{}[\]()#+\-.!|~<>])/g, (_, ch) => hold(escapeHtml(ch)))
+    // Obsidian embeds: ![[image.png|300]] is an image (path resolved by the importer);
+    // ![[Note]] embeds a note, kept as a link to it.
+    .replace(/!\[\[([^[\]\n|]+?)(?:\|([^[\]\n]*))?\]\]/g, (m, target, label) => {
+      const t = target.trim();
+      if (EMBED_IMAGE_RE.test(t)) return hold(`<img src="${escapeHtml(t)}" alt="">`);
+      const { title, alias } = splitLinkText(label ? `${t}|${label}` : t);
+      return title ? hold(linkHtml(title, alias)) : m;
+    })
+    // Links between notes: [[Title]] / [[Title|label]] (the caller resolves titles to ids).
+    .replace(/\[\[([^[\]\n]+)\]\]/g, (m, inner) => {
+      const { title, alias } = splitLinkText(inner);
+      return title ? hold(linkHtml(title, alias)) : m;
+    })
     // Spaces in unbracketed paths aren't CommonMark, but Obsidian/Typora write them.
     .replace(/!\[([^\]]*)\]\(\s*(<[^>]*>|[^)]+?)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g, (_, alt, dest) =>
       hold(`<img src="${escapeHtml(unwrapDestination(dest))}" alt="${escapeHtml(alt)}">`),
@@ -460,10 +485,34 @@ function parseBlocks(lines) {
   return out;
 }
 
+const MD_BLOCK_HINTS = [
+  /^ {0,3}#{1,6}[ \t]+\S/, // heading
+  /^ {0,3}(`{3,}|~{3,})/, // fence
+  /^ {0,3}> ?\S/, // quote
+  /^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]/, // task list
+  TABLE_SEP_RE,
+];
+const MD_LIST_HINT = /^[ \t]*([-*+]|\d{1,9}[.)])[ \t]+\S/;
+const MD_INLINE_HINT = /\[\[[^[\]\n]+\]\]|`[^`\n]+`|\*\*\S(?:[^*\n]*\S)?\*\*|~~\S(?:[^~\n]*\S)?~~|!?\[[^\]\n]+\]\([^)\s]+\)/;
+
+/**
+ * Pasted plain text that is worth converting from Markdown: "block" (headings, fences, quotes,
+ * tables, lists) | "inline" (one line with `code`, **bold**, ~~strike~~ or links) | null.
+ * Plain prose (and a lone "*" or "_") stays as text.
+ */
+export function markdownKind(text) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const filled = lines.filter((l) => l.trim());
+  if (!filled.length) return null;
+  if (filled.length > 1) {
+    if (lines.some((l) => MD_BLOCK_HINTS.some((re) => re.test(l)))) return "block";
+    if (filled.filter((l) => MD_LIST_HINT.test(l)).length >= 2) return "block";
+  }
+  return MD_INLINE_HINT.test(text) ? (filled.length > 1 ? "block" : "inline") : null;
+}
+
 /** Converts Markdown to (unsanitized) note HTML. Image src values are left as written. */
 export function markdownToHtml(md) {
-  const text = md.replace(/^﻿/, "").replace(/\r\n?/g, "\n");
-  // Front matter (YAML) is metadata, not content.
-  const body = text.replace(/^---\n[\s\S]*?\n(?:---|\.\.\.)\n/, "");
-  return parseBlocks(body.split("\n"));
+  // Front matter (YAML) is metadata, not content (see splitFrontMatter / yamlToProps).
+  return parseBlocks(splitFrontMatter(md).body.split("\n"));
 }

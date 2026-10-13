@@ -329,6 +329,10 @@ impl Session for MssqlSession {
         mssql_meta::ddl(&mut self.client, path).await
     }
 
+    async fn table_schema(&mut self, schema: &str, name: &str) -> DbResult<TableSchema> {
+        mssql_meta::table_schema(&mut self.client, schema, name).await
+    }
+
     async fn begin(&mut self) -> DbResult<u32> {
         self.batch("BEGIN TRANSACTION").await?;
         self.tran_count().await

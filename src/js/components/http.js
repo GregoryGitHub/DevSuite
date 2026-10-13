@@ -25,6 +25,7 @@ import {
 } from "../utils/httpModel.js";
 import { SNIPPETS, parseCurl, exportPostman, exportPostmanEnvironment } from "../utils/httpConvert.js";
 import { runScript } from "../utils/httpScripts.js";
+import { descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, removeFolderTree } from "../utils/folderTree.js";
 import { formatNoteListDate, formatNoteFullDate, noteGroupLabel } from "../utils/date.js";
 import { initHttpEditor, loadRequest, renderResponse, refreshVariables, refreshRequestTab, focusUrl, focusName } from "./httpEditor.js";
 import { el, icon, attachVarAutocomplete } from "./httpWidgets.js";
@@ -69,6 +70,7 @@ const inflight = new Map();
 let saveTimer = null;
 let listRenderQueued = false;
 let toastTimer = null;
+let draggedFolder = null; // { collId, id } da pasta arrastada na lista
 
 const data = () => state.http;
 
@@ -369,8 +371,7 @@ function createRequest({ collectionId = targetCollectionId(), folderId = 0, fiel
   const req = newRequest({ collection_id: collectionId, folder_id: folderId, ...fields });
   data().requests.push(req);
   const coll = findColl(collectionId);
-  const folder = coll?.folders.find((f) => f.id === folderId);
-  if (folder) folder.collapsed = false;
+  if (coll) expandFolder(coll, folderId);
   if (inHistory() || (scopeCollId() !== null && scopeCollId() !== collectionId) || ui.query) {
     ui.scope = `c:${collectionId}`;
     ui.query = "";
@@ -455,11 +456,8 @@ function duplicateCollection(id) {
   if (!src) return;
   const coll = { ...clone(src), id: uid(), name: `${src.name} (cópia)` };
   const folderMap = new Map();
-  coll.folders = coll.folders.map((f) => {
-    const nf = { ...f, id: uid() };
-    folderMap.set(f.id, nf.id);
-    return nf;
-  });
+  for (const f of coll.folders) folderMap.set(f.id, uid());
+  coll.folders = coll.folders.map((f) => ({ ...f, id: folderMap.get(f.id), parent_id: folderMap.get(f.parent_id) || 0 }));
   data().collections.push(coll);
   for (const r of data().requests.filter((x) => x.collection_id === id)) {
     data().requests.push(normalizeRequest({ ...clone(r), id: uid(), collection_id: coll.id, folder_id: folderMap.get(r.folder_id) || 0 }));
@@ -487,14 +485,21 @@ async function deleteCollection(id) {
   else renderHttp();
 }
 
-function createFolder(collectionId) {
+/** Opens `folderId` and the folders above it (no save: the caller saves). */
+function expandFolder(coll, folderId) {
+  for (let f = coll.folders.find((x) => x.id === folderId); f; f = coll.folders.find((x) => x.id === f.parent_id)) {
+    f.collapsed = false;
+  }
+}
+
+/** New folder in the collection, inside `parentId` (0 = collection root). */
+function createFolder(collectionId, parentId = 0) {
   const coll = findColl(collectionId);
   if (!coll) return;
-  const names = new Set(coll.folders.map((f) => f.name));
-  let name = "Nova Pasta";
-  for (let i = 2; names.has(name); i++) name = `Nova Pasta ${i}`;
-  const folder = { id: uid(), name, collapsed: false };
+  if (!coll.folders.some((f) => f.id === parentId)) parentId = 0;
+  const folder = { id: uid(), name: uniqueFolderName(coll.folders, parentId, "Nova Pasta"), parent_id: parentId, collapsed: false };
   coll.folders.push(folder);
+  expandFolder(coll, parentId);
   saveSoon();
   if (ui.scope !== `c:${collectionId}`) setScope(`c:${collectionId}`);
   ui.editingFolderId = folder.id;
@@ -511,24 +516,41 @@ function renameFolder(coll, folderId, name) {
   renderHttp();
 }
 
+/** Deletes the folder, its subfolders and every request inside them. */
 async function deleteFolder(coll, folderId) {
   const folder = coll.folders.find((f) => f.id === folderId);
   if (!folder) return;
-  const inside = data().requests.filter((r) => r.collection_id === coll.id && r.folder_id === folderId);
-  if (inside.length) {
+  const ids = descendantIds(coll.folders, folderId);
+  const inside = data().requests.filter((r) => r.collection_id === coll.id && ids.has(r.folder_id));
+  if (inside.length || ids.size > 1) {
+    const subs = ids.size - 1;
+    const parts = [subs && plural(subs, "subpasta", "subpastas"), inside.length && plural(inside.length, "requisição", "requisições")].filter(Boolean);
     const ok = await confirmDialog({
       title: "Apagar pasta",
-      message: `Apagar a pasta "${folder.name}" e ${plural(inside.length, "requisição", "requisições")}?`,
+      message: `Apagar a pasta "${folder.name}" e ${parts.join(" e ")}?`,
       confirmLabel: "Apagar",
       danger: true,
     });
     if (!ok) return;
   }
-  coll.folders = coll.folders.filter((f) => f.id !== folderId);
+  removeFolderTree(coll.folders, folderId);
   data().requests = data().requests.filter((r) => !inside.includes(r));
   if (inside.some((r) => r.id === ui.selectedId)) ui.selectedId = null;
   saveSoon();
   renderHttp();
+}
+
+/** Moves a folder (with subfolders and requests) inside `parentId` of the same collection. */
+function moveFolder(coll, folderId, parentId) {
+  const folder = coll.folders.find((f) => f.id === folderId);
+  if (!folder || (folder.parent_id || 0) === parentId || !canMoveFolder(coll.folders, folderId, parentId)) return;
+  folder.parent_id = parentId;
+  // Last among the new siblings.
+  coll.folders.splice(coll.folders.indexOf(folder), 1);
+  coll.folders.push(folder);
+  expandFolder(coll, parentId);
+  saveSoon();
+  renderList();
 }
 
 function saveHistoryToCollection() {
@@ -651,10 +673,11 @@ let runnerKeys = new Set();
 
 function openRunner(coll = findColl(targetCollectionId())) {
   if (!coll) return;
-  const order = [0, ...coll.folders.map((f) => f.id)];
+  // Root requests first, then each folder in tree order (as Postman's runner).
+  const order = new Map([0, ...flattenTree(coll.folders).map((e) => e.folder.id)].map((id, i) => [id, i]));
   const reqs = data().requests
     .filter((r) => r.collection_id === coll.id)
-    .sort((a, b) => order.indexOf(a.folder_id) - order.indexOf(b.folder_id));
+    .sort((a, b) => (order.get(a.folder_id) ?? 0) - (order.get(b.folder_id) ?? 0));
   runnerDialog(coll, reqs, {
     run: (req, iteration) => {
       const key = `run:${req.id}:${uid()}`;
@@ -807,6 +830,13 @@ function methodTag(method) {
   return el("span.hx-method-tag", { dataset: { method } }, method === "DELETE" ? "DEL" : method === "OPTIONS" ? "OPT" : method);
 }
 
+/** "Coleção / Pasta / Subpasta" of a request. */
+function requestPath(req) {
+  const coll = findColl(req.collection_id);
+  const folder = coll && folderPath(coll.folders, req.folder_id);
+  return `${coll?.name || ""}${folder ? ` / ${folder}` : ""}`;
+}
+
 function renderRequestItem(req, { showColl = false } = {}) {
   const item = el("div.nt-item.hx-item", { draggable: true });
   item.dataset.id = req.id;
@@ -826,9 +856,7 @@ function renderRequestItem(req, { showColl = false } = {}) {
     el("div.hx-item-url", {}, req.url || "Sem URL"),
   );
   if (showColl) {
-    const coll = findColl(req.collection_id);
-    const folder = coll?.folders.find((f) => f.id === req.folder_id);
-    item.append(el("div.nt-item-folder", {}, icon("fa-solid fa-box-archive"), `${coll?.name || ""}${folder ? ` / ${folder.name}` : ""}`));
+    item.append(el("div.nt-item-folder", {}, icon("fa-solid fa-box-archive"), requestPath(req)));
   }
 
   item.addEventListener("click", () => {
@@ -872,8 +900,9 @@ function renderHistoryItem(h) {
   return item;
 }
 
-function folderHeader(coll, folder, count) {
-  const head = el("div.nt-group-label.hx-folder-head");
+function folderHeader(coll, folder, count, depth = 0) {
+  const head = el("div.nt-group-label.hx-folder-head", { draggable: ui.editingFolderId !== folder.id });
+  if (depth) head.style.setProperty("--depth", depth);
   head.classList.toggle("collapsed", !!folder.collapsed);
   head.append(icon("fa-solid fa-chevron-down hx-folder-caret"), icon("fa-regular fa-folder"));
   if (ui.editingFolderId === folder.id) {
@@ -928,8 +957,20 @@ function folderHeader(coll, folder, count) {
     e.preventDefault();
     showFolderMenu(e.clientX, e.clientY, coll, folder);
   });
+  // Folders are dragged onto another folder of the same collection (= subfolder).
+  head.addEventListener("dragstart", (e) => {
+    draggedFolder = { collId: coll.id, id: folder.id };
+    e.dataTransfer.setData("application/x-http-folder", String(folder.id));
+    e.dataTransfer.effectAllowed = "move";
+  });
+  head.addEventListener("dragend", () => (draggedFolder = null));
+  const accepts = (e) =>
+    e.dataTransfer.types.includes("application/x-http-req") ||
+    (e.dataTransfer.types.includes("application/x-http-folder") &&
+      draggedFolder?.collId === coll.id &&
+      canMoveFolder(coll.folders, draggedFolder.id, folder.id));
   head.addEventListener("dragover", (e) => {
-    if (!e.dataTransfer.types.includes("application/x-http-req")) return;
+    if (!accepts(e)) return;
     e.preventDefault();
     head.classList.add("drop-target");
   });
@@ -938,7 +979,9 @@ function folderHeader(coll, folder, count) {
     e.preventDefault();
     head.classList.remove("drop-target");
     const id = Number(e.dataTransfer.getData("application/x-http-req"));
+    const folderId = Number(e.dataTransfer.getData("application/x-http-folder"));
     if (id) moveRequest(id, coll.id, folder.id);
+    else if (folderId) moveFolder(coll, folderId, folder.id);
   });
   return head;
 }
@@ -952,13 +995,35 @@ function emptyList(text, action) {
 }
 
 function renderCollectionList(coll, reqs) {
-  const root = reqs.filter((r) => !r.folder_id || !coll.folders.some((f) => f.id === r.folder_id));
+  const ids = new Set(coll.folders.map((f) => f.id));
+  const byFolder = new Map();
+  for (const r of reqs) {
+    const fid = ids.has(r.folder_id) ? r.folder_id : 0;
+    if (!byFolder.has(fid)) byFolder.set(fid, []);
+    byFolder.get(fid).push(r);
+  }
+  // Header counts include the subfolders (pre-order reversed = children before parents).
+  const counts = new Map([...byFolder].map(([fid, list]) => [fid, list.length]));
+  for (const { folder } of flattenTree(coll.folders).reverse()) {
+    if (folder.parent_id) counts.set(folder.parent_id, (counts.get(folder.parent_id) || 0) + (counts.get(folder.id) || 0));
+  }
+  const root = byFolder.get(0) || [];
   if (root.length) listEl.append(groupBox(root.map((r) => renderRequestItem(r))));
-  for (const folder of coll.folders) {
-    const inside = reqs.filter((r) => r.folder_id === folder.id);
-    listEl.append(folderHeader(coll, folder, inside.length));
-    if (!folder.collapsed) {
-      listEl.append(inside.length ? groupBox(inside.map((r) => renderRequestItem(r))) : el("div.hx-folder-empty", {}, "Pasta vazia — arraste requisições para cá"));
+  // Each folder: header, its requests, then its subfolders (hidden while collapsed).
+  const collapsed = new Set(coll.folders.filter((f) => f.collapsed).map((f) => f.id));
+  for (const { folder, depth, hasChildren } of flattenTree(coll.folders, collapsed)) {
+    const inside = byFolder.get(folder.id) || [];
+    listEl.append(folderHeader(coll, folder, counts.get(folder.id) || 0, depth));
+    if (folder.collapsed) continue;
+    const box = inside.length
+      ? groupBox(inside.map((r) => renderRequestItem(r)))
+      : hasChildren
+        ? null
+        : el("div.hx-folder-empty", {}, "Pasta vazia — arraste requisições para cá");
+    if (box) {
+      if (depth) box.style.setProperty("--depth", depth);
+      box.classList.add("hx-folder-body");
+      listEl.append(box);
     }
   }
   if (!reqs.length && !coll.folders.length) {
@@ -1041,9 +1106,7 @@ function renderEditor() {
   if (h) {
     historyTextEl.textContent = `Do histórico · ${formatNoteFullDate(h.at)}`;
   }
-  const coll = findColl(req.collection_id);
-  const folder = coll?.folders.find((f) => f.id === req.folder_id);
-  const crumb = coll ? `${coll.name}${folder ? ` / ${folder.name}` : ""} /` : "";
+  const crumb = findColl(req.collection_id) ? `${requestPath(req)} /` : "";
   loadRequest(req, { readOnly: !!h, crumb });
   renderResponse(responses.get(currentKey()) || null);
 }
@@ -1074,6 +1137,7 @@ function showMenu(x, y, items) {
     const b = el("button.nt-menu-item", { type: "button", disabled: !!item.disabled }, el("i", { class: item.icon || "" }), item.label);
     b.classList.toggle("danger", !!item.danger);
     b.classList.toggle("indent", !!item.indent);
+    if (item.depth) b.style.setProperty("--depth", item.depth);
     b.classList.toggle("checked", !!item.checked);
     b.addEventListener("click", () => {
       closeMenu();
@@ -1102,8 +1166,15 @@ function moveTargets(req) {
   const items = [{ header: "Mover para" }];
   for (const c of data().collections) {
     items.push({ label: c.name, icon: "fa-solid fa-box-archive", indent: true, disabled: req.collection_id === c.id && !req.folder_id, run: () => moveRequest(req.id, c.id, 0) });
-    for (const f of c.folders) {
-      items.push({ label: `${c.name} / ${f.name}`, icon: "fa-regular fa-folder", indent: true, disabled: req.collection_id === c.id && req.folder_id === f.id, run: () => moveRequest(req.id, c.id, f.id) });
+    for (const { folder: f, depth } of flattenTree(c.folders)) {
+      items.push({
+        label: f.name,
+        icon: "fa-regular fa-folder",
+        indent: true,
+        depth: depth + 1,
+        disabled: req.collection_id === c.id && req.folder_id === f.id,
+        run: () => moveRequest(req.id, c.id, f.id),
+      });
     }
   }
   return items;
@@ -1158,6 +1229,8 @@ function showCollectionMenu(x, y, c) {
 function showFolderMenu(x, y, coll, folder) {
   showMenu(x, y, [
     { label: "Nova Requisição", icon: "fa-solid fa-plus", run: () => createRequest({ collectionId: coll.id, folderId: folder.id }) },
+    { label: "Nova Subpasta", icon: "fa-solid fa-folder-tree", run: () => createFolder(coll.id, folder.id) },
+    "sep",
     {
       label: "Renomear Pasta",
       icon: "fa-solid fa-pen",
@@ -1166,6 +1239,7 @@ function showFolderMenu(x, y, coll, folder) {
         renderList();
       },
     },
+    folder.parent_id && { label: "Mover para a Raiz da Coleção", icon: "fa-solid fa-arrow-turn-up", run: () => moveFolder(coll, folder.id, 0) },
     "sep",
     { label: "Apagar Pasta", icon: "fa-regular fa-trash-can", danger: true, run: () => deleteFolder(coll, folder.id) },
   ]);
@@ -1314,7 +1388,7 @@ function seedExamples(d) {
   const coll = d.collections[0];
   coll.name = "Exemplos";
   coll.variables = [kv("baseUrl", "https://jsonplaceholder.typicode.com")];
-  const folder = { id: uid(), name: "Posts", collapsed: false };
+  const folder = { id: uid(), name: "Posts", parent_id: 0, collapsed: false };
   coll.folders.push(folder);
   d.requests.push(
     newRequest({

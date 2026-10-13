@@ -501,20 +501,22 @@ export function importPostman(json) {
   collection.scripts = pmScripts(data.event);
   const requests = [];
 
-  // Our folders are one level deep: nested Postman folders become "Pai / Filho".
-  const walk = (items, folderId, prefix) => {
+  // Postman folders (any depth) become folders with parent_id. A folder's auth applies to
+  // the requests below it that inherit (our requests only inherit from the collection).
+  const walk = (items, folderId, inheritedAuth) => {
     for (const item of items) {
       if (Array.isArray(item.item)) {
-        const name = prefix ? `${prefix} / ${item.name}` : item.name || "Pasta";
-        const folder = { id: uid(), name, collapsed: false };
+        const folder = { id: uid(), name: String(item.name || "Pasta"), parent_id: folderId, collapsed: false };
         collection.folders.push(folder);
-        walk(item.item, folder.id, name);
+        walk(item.item, folder.id, pmAuthIn(item.auth) || inheritedAuth);
       } else {
-        requests.push(pmRequestIn(item, collection.id, folderId));
+        const req = pmRequestIn(item, collection.id, folderId);
+        if (req.auth.type === "inherit" && inheritedAuth) req.auth = JSON.parse(JSON.stringify(inheritedAuth));
+        requests.push(req);
       }
     }
   };
-  walk(data.item, 0, "");
+  walk(data.item, 0, null);
   return { collection, requests };
 }
 
@@ -577,7 +579,11 @@ function pmRequestOut(r) {
 }
 
 export function exportPostman(collection, requests) {
-  const inFolder = (fid) => requests.filter((r) => r.folder_id === fid).map(pmRequestOut);
+  const ids = new Set(collection.folders.map((f) => f.id));
+  // Requests in a folder that no longer exists go to the root.
+  const inFolder = (fid) => requests.filter((r) => (ids.has(r.folder_id) ? r.folder_id : 0) === fid).map(pmRequestOut);
+  const folderItems = (pid) =>
+    collection.folders.filter((f) => (f.parent_id || 0) === pid).map((f) => ({ name: f.name, item: [...inFolder(f.id), ...folderItems(f.id)] }));
   return {
     info: {
       _postman_id: crypto.randomUUID(),
@@ -585,7 +591,7 @@ export function exportPostman(collection, requests) {
       description: collection.description || undefined,
       schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     },
-    item: [...collection.folders.map((f) => ({ name: f.name, item: inFolder(f.id) })), ...inFolder(0)],
+    item: [...folderItems(0), ...inFolder(0)],
     auth: pmAuthOut(collection.auth),
     event: pmEventsOut(collection.scripts),
     variable: collection.variables.length ? pmKvOut(collection.variables) : undefined,

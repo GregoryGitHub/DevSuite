@@ -1,19 +1,35 @@
 import { state } from "../state.js";
-import { hasTauri, openFileDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi } from "../api.js";
+import {
+  hasTauri, notesApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
+} from "../api.js";
+import { updateSettingsUI } from "./settings.js";
 import {
   loadNoteStore,
   ensureContent,
   saveNoteContent,
   saveNoteMeta,
+  saveNotesBulk,
   deleteNotes,
   saveFolders as saveFoldersStore,
   searchNotes,
   collectImageGarbage,
 } from "../noteStore.js";
+import {
+  descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, ensureFolderPath, removeFolderTree,
+} from "../utils/folderTree.js";
+import { relDirs, relStem, vaultIndex, vaultImageLookup, normalizeVaultLinks, applyFileTitle } from "../utils/mdImport.js";
 import { formatNoteListDate, formatNoteFullDate, noteGroupLabel } from "../utils/date.js";
 import { noteTitle, notePreview, noteIsEmpty, noteMatches, sanitizeHtml, escapeHtml, localImageName } from "../utils/noteContent.js";
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
+import {
+  TitleIndex, noteLinks, normalizeProps, propsEmpty, propsToYaml, parseFrontMatter, splitFrontMatter, newZid,
+  parseQuery, hasFilters, matchesFilters, backlinkMap, buildGraph, tagCounts, fold, dateOnly,
+} from "../utils/zettel.js";
+import { setLinkProvider } from "./noteLinks.js";
+import { createPropsPanel } from "./noteProps.js";
+import { createLinksPanel } from "./noteLinksPanel.js";
 import { resolveMarkdownImages } from "../utils/noteImages.js";
+import { exportNotePdf } from "./notePdf.js";
 import { initEditor, loadEditor, runCommand, getSelectionState, focusEditorEnd } from "./noteEditor.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
 
@@ -39,6 +55,7 @@ const trashBannerEl = document.getElementById("nt-trash-banner");
 const popoverEl = document.getElementById("nt-format-popover");
 const menuEl = document.getElementById("nt-menu");
 const toastEl = document.getElementById("nt-toast");
+const graphEl = document.getElementById("nt-graph");
 
 let saveTimer = null;
 let listRenderQueued = false;
@@ -47,6 +64,18 @@ let editorLoadSeq = 0; // ignora conteúdo que chegou do banco depois de trocar 
 let searchHits = null; // ids do banco para ui.query (null = busca em andamento)
 let searchSeq = 0;
 let searchTimer = null;
+let titleIndex = null; // TitleIndex (títulos/apelidos -> nota), refeito sob demanda
+let lastTitle = null; // título da nota em edição (o índice só é refeito se ele mudar)
+let propsPanel = null;
+let linksPanel = null;
+let linksPanelQueued = false;
+let graph = null; // noteGraph.js, carregado só quando o grafo é aberto
+let graphLoading = null;
+let graphReturnScope = "all"; // escopo de onde se abriu o grafo
+let graphShowLocal = null; // modo pedido na próxima abertura (null = o último usado)
+let draggedFolderId = null; // pasta sendo arrastada na barra lateral
+const navBack = []; // Alt+← / Alt+→ entre notas abertas por link
+const navForward = [];
 
 const MD_FILTERS = [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd", "txt"] }];
 
@@ -60,8 +89,57 @@ function folderName(id) {
   return allFolders().find((f) => f.id === id)?.name ?? DEFAULT_FOLDER.name;
 }
 
+/** Caminho da pasta ("Projetos / Rust") para rótulos fora da barra lateral. */
+function folderLabel(id) {
+  return (id && folderPath(state.folders, id)) || DEFAULT_FOLDER.name;
+}
+
+/** Pasta "Notas" + árvore das pastas (todas abertas), para menus e o grafo. */
+function folderTreeEntries() {
+  return [{ folder: DEFAULT_FOLDER, depth: 0 }, ...flattenTree(state.folders)];
+}
+
 function scopeFolderId() {
   return ui.scope.startsWith("f:") ? Number(ui.scope.slice(2)) : null;
+}
+
+/** Pasta aberta e as subpastas dela (a lista mostra as notas de todas). null = todas. */
+function scopeFolderIds() {
+  const fid = scopeFolderId();
+  if (fid === null) return null;
+  return fid === 0 ? new Set([0]) : descendantIds(state.folders, fid);
+}
+
+/** Pasta real aberta (para criar subpasta/importar dentro dela); 0 = nível superior. */
+function scopeParentFolder() {
+  const fid = scopeFolderId();
+  return fid && state.folders.some((f) => f.id === fid) ? fid : 0;
+}
+
+// Subpastas recolhidas na barra lateral (conveniência local).
+const COLLAPSED_KEY = "nt-collapsed-folders";
+const collapsedFolders = new Set(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  })(),
+);
+
+function setFolderCollapsed(id, collapsed) {
+  if (collapsed) collapsedFolders.add(id);
+  else collapsedFolders.delete(id);
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedFolders]));
+  } catch {}
+}
+
+/** Abre as pastas acima de `id` (para ela aparecer na barra lateral). */
+function revealFolder(id) {
+  const f = state.folders.find((x) => x.id === id);
+  for (let p = f?.parent_id; p; p = state.folders.find((x) => x.id === p)?.parent_id) setFolderCollapsed(p, false);
 }
 
 function scopeLabel() {
@@ -89,6 +167,220 @@ const titleOf = (n) => (n.content !== undefined ? noteTitle(n) : n.title || "Nov
 const previewOf = (n) => (n.content !== undefined ? notePreview(n) : n.preview || "Nenhum texto adicional");
 const isEmptyNote = (n) => n.content !== undefined && noteIsEmpty(n);
 
+// ---------- Zettelkasten: links [[ ]], propriedades, grafo ----------
+
+const zk = () => !!state.settings.zettelkasten;
+
+function getIndex() {
+  return (titleIndex ||= new TitleIndex(state.notes, titleOf));
+}
+
+/** Títulos/apelidos/lixeira mudaram: índice, painel de links e grafo são refeitos. */
+function notesChanged() {
+  titleIndex = null;
+  queueLinksPanel();
+  if (graph?.visible) graph.refresh();
+}
+
+function takenZids() {
+  return new Set(state.notes.map((n) => n.props?.zid).filter(Boolean));
+}
+
+/** Nota sem id zettel ganha um (pela data de criação) quando é editada no modo Zettelkasten. */
+function ensureZid(note) {
+  if (!zk() || note.deleted_at || note.props?.zid) return false;
+  const created = new Date(note.created_at || note.id);
+  note.props = { ...normalizeProps(note.props), zid: newZid(Number.isNaN(created.getTime()) ? new Date() : created, takenZids()) };
+  return true;
+}
+
+/** Filtros da busca (tag:, #tag, type:, status:, id:, [[Nota]]) só valem no modo Zettelkasten. */
+function queryFilters() {
+  const q = ui.query.trim();
+  return zk() ? parseQuery(q) : { text: q, tags: [], type: "", status: "", zid: "", linksTo: [] };
+}
+
+function linkedTitle(id) {
+  const n = findNote(id);
+  return n && !n.deleted_at ? titleOf(n) : null;
+}
+
+function noteInfo(n) {
+  return { id: n.id, title: titleOf(n), folder: folderLabel(n.folder_id), preview: previewOf(n).slice(0, 120) };
+}
+
+/** Rodapé "Mencionada em" / "Links" da nota aberta (dos metadados em memória). */
+function renderLinksPanel() {
+  linksPanelQueued = false;
+  const note = selectedNote();
+  if (!linksPanel) return;
+  if (!note || note.content === undefined) return linksPanel.hide();
+  const index = getIndex();
+  const outgoing = [];
+  const seen = new Set();
+  for (const l of note.links || []) {
+    const target = typeof l === "number" ? findNote(l) : index.resolve(l);
+    if (target && !target.deleted_at && target.id !== note.id) {
+      if (!seen.has(target.id)) seen.add(target.id), outgoing.push(noteInfo(target));
+    } else if (typeof l === "string") outgoing.push({ title: l, missing: true });
+  }
+  const back = [...(backlinkMap(state.notes, index).get(note.id) || [])].map((id) => noteInfo(findNote(id)));
+  linksPanel.render({ outgoing, backlinks: back });
+}
+
+function queueLinksPanel() {
+  if (linksPanelQueued) return;
+  linksPanelQueued = true;
+  requestAnimationFrame(renderLinksPanel);
+}
+
+function renderPropsPanel() {
+  const note = selectedNote();
+  if (!propsPanel) return;
+  if (!zk() || !note || note.content === undefined) return propsPanel.hide();
+  propsPanel.render(note, !!note.deleted_at);
+}
+
+function handlePropsChange(note) {
+  if (ensureZid(note)) renderPropsPanel();
+  note.dirty = true;
+  note.updated_at = Date.now();
+  renderEditorDate(note);
+  saveNotesSoon();
+  notesChanged();
+  queueListRender();
+}
+
+/** Cria uma nota com esse título (link [[ ]] para nota nova) sem sair da atual. */
+function createLinkedNote(title) {
+  const folderId = selectedNote()?.folder_id ?? scopeFolderId() ?? 0;
+  const id = makeNote(`<h1>${escapeHtml(title.trim() || "Nova Nota")}</h1>`, folderId);
+  flushNotesSave();
+  notesChanged();
+  renderNotes();
+  return id;
+}
+
+function currentLocation() {
+  return { scope: ui.scope, query: ui.query, id: ui.selectedId };
+}
+
+function setQuery(query) {
+  ui.query = query;
+  searchInputs.forEach((i) => (i.value = query));
+  if (!query.trim()) searchHits = null;
+}
+
+/** Abre a nota; se ela não aparece na lista atual, vai para a pasta dela. */
+function revealNote(id) {
+  const note = findNote(id);
+  if (!note) return;
+  if (ui.scope === "graph") ui.scope = graphReturnScope;
+  if (!visibleNotes().some((n) => n.id === id)) {
+    setQuery("");
+    ui.scope = note.deleted_at ? "trash" : `f:${note.folder_id}`;
+    revealFolder(note.folder_id);
+  }
+  selectNote(id);
+}
+
+/** Navegação por link (com histórico para Alt+← / Alt+→). */
+function openLinkedNote(id) {
+  if (!findNote(id) || (id === ui.selectedId && ui.scope !== "graph")) return;
+  navBack.push(currentLocation());
+  if (navBack.length > 60) navBack.shift();
+  navForward.length = 0;
+  revealNote(id);
+}
+
+function restoreLocation(loc) {
+  if (loc.scope === "graph") {
+    if (loc.id !== null && findNote(loc.id)) selectNote(loc.id, { openEditor: false });
+    return openGraph();
+  }
+  ui.scope = loc.scope;
+  setQuery(loc.query || "");
+  if (ui.query.trim()) runSearch();
+  if (loc.id !== null && findNote(loc.id)) selectNote(loc.id);
+  else renderNotes();
+}
+
+function navigate(delta) {
+  const from = delta < 0 ? navBack : navForward;
+  const to = delta < 0 ? navForward : navBack;
+  const loc = from.pop();
+  if (!loc) return false;
+  to.push(currentLocation());
+  restoreLocation(loc);
+  return true;
+}
+
+function openTagSearch(tag) {
+  if (ui.scope === "graph") ui.scope = graphReturnScope;
+  if (ui.scope === "trash") ui.scope = "all";
+  setQuery(`tag:${tag}`);
+  if (!state.desktopMode) ui.pane = "list";
+  runSearch();
+}
+
+function ensureGraph() {
+  if (graph) return Promise.resolve(graph);
+  graphLoading ||= import("./noteGraph.js").then(({ createGraph }) => {
+    graph = createGraph(graphEl, {
+      data: (o) =>
+        buildGraph(state.notes, {
+          ...o,
+          // A pasta escolhida inclui as subpastas.
+          folderId: o.folderId ? descendantIds(state.folders, o.folderId) : o.folderId,
+          titleOf,
+          index: getIndex(),
+        }),
+      folders: () => folderTreeEntries().map(({ folder: f }) => ({ id: f.id, name: f.id ? folderPath(state.folders, f.id) : f.name })),
+      currentId: () => ui.selectedId,
+      open: openLinkedNote,
+      openTag: openTagSearch,
+      create: (title) => openLinkedNote(createLinkedNote(title)),
+      back: () => {
+        ui.scope = graphReturnScope;
+        ui.pane = "folders";
+        renderNotes();
+      },
+    });
+    return graph;
+  });
+  return graphLoading;
+}
+
+/** Grafo (modo Zettelkasten); `local` = centrado na nota aberta. */
+function openGraph({ local = null } = {}) {
+  if (!zk()) return;
+  if (ui.scope !== "graph") {
+    graphReturnScope = ui.scope;
+    discardIfEmpty(ui.selectedId);
+    flushNotesSave();
+  }
+  closePopover();
+  closeMenu();
+  ui.scope = "graph";
+  graphShowLocal = local;
+  if (graph?.visible && local !== null) graph.show({ local });
+  renderNotes(); // syncGraph() mostra o grafo
+}
+
+/** Mostra/esconde o grafo conforme o escopo e a aba ativa (sem recriar). */
+function syncGraph() {
+  const want = ui.scope === "graph" && zk() && state.activeMainView === "notes";
+  if (want && !graph?.visible) {
+    ensureGraph()
+      .then((g) => {
+        if (ui.scope !== "graph" || g.visible || state.activeMainView !== "notes") return;
+        g.show({ local: graphShowLocal });
+        graphShowLocal = null;
+      })
+      .catch((e) => toast(`Falha ao abrir o grafo: ${e}`));
+  } else if (!want && graph?.visible) graph.hide();
+}
+
 function storeError(message) {
   toast(`Falha ao salvar as notas: ${message}`);
 }
@@ -102,13 +394,17 @@ function matchesQuery(n, q) {
 function visibleNotes() {
   const q = ui.query.trim();
   const inTrash = ui.scope === "trash";
-  const fid = scopeFolderId();
+  const fids = scopeFolderIds();
   let list = state.notes.filter((n) => {
     if (inTrash) return !!n.deleted_at;
     if (n.deleted_at) return false;
-    return q || fid === null || n.folder_id === fid;
+    return q || fids === null || fids.has(n.folder_id);
   });
-  if (q) list = list.filter((n) => matchesQuery(n, q));
+  if (q) {
+    const f = queryFilters();
+    const index = hasFilters(f) ? getIndex() : null;
+    list = list.filter((n) => (!index || matchesFilters(n, f, index)) && (!f.text || matchesQuery(n, f.text)));
+  }
   return list.sort((a, b) => {
     if (inTrash) return b.deleted_at - a.deleted_at;
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -118,9 +414,9 @@ function visibleNotes() {
 
 function runSearch() {
   clearTimeout(searchTimer);
-  const q = ui.query.trim();
+  const q = queryFilters().text;
   if (!q) {
-    searchHits = null;
+    searchHits = null; // vazia ou só filtros (tag:, type:...): resolvida na memória
     return renderNotes();
   }
   const seq = ++searchSeq;
@@ -185,28 +481,51 @@ function setScope(scope) {
   else renderNotes();
 }
 
-/** Adds a note to the current folder and returns its id. */
-function addNote(content) {
-  if (ui.scope === "trash") ui.scope = "all";
-  ui.query = "";
-  searchInputs.forEach((i) => (i.value = ""));
-
+/**
+ * A new note object (not added to state). `time` = update date, `created` = creation date
+ * (defaults to `time`); `ids`/`zids` are the taken ids, passed by bulk imports (defaults
+ * look at state.notes).
+ */
+function newNoteObject(content, folderId, props = null, { time = Date.now(), created = null, ids = null, zids = null } = {}) {
   let id = Date.now();
-  while (findNote(id)) id++;
-  const now = Date.now();
-  state.notes.unshift({
+  while (ids ? ids.has(id) : findNote(id)) id++;
+  ids?.add(id);
+  const createdAt = created ?? time;
+  let zid = props?.zid;
+  if (zk() && !zid) {
+    const taken = zids || takenZids();
+    zid = newZid(new Date(createdAt), taken);
+    taken.add(zid);
+  }
+  return {
     id,
     title: "",
     content,
-    created_at: new Date(now).toISOString(),
-    updated_at: now,
+    created_at: new Date(createdAt).toISOString(),
+    updated_at: time,
     pinned: false,
-    folder_id: scopeFolderId() ?? 0,
+    folder_id: folderId,
     deleted_at: null,
+    props: zk() ? { ...normalizeProps(props), zid } : props,
+    links: noteLinks(content),
     dirty: true, // saved once it has content (flushNotesSave skips empty notes)
     saved: false,
-  });
-  return id;
+  };
+}
+
+/** Creates a note in `folderId` (not selected) and returns its id. */
+function makeNote(content, folderId, props = null, created = null) {
+  const note = newNoteObject(content, folderId, props, { created });
+  state.notes.unshift(note);
+  titleIndex = null;
+  return note.id;
+}
+
+/** Adds a note to the current folder and returns its id. */
+function addNote(content, props = null, created = null) {
+  if (ui.scope === "trash" || ui.scope === "graph") ui.scope = "all";
+  setQuery("");
+  return makeNote(content, scopeFolderId() ?? 0, props, created);
 }
 
 function createNote() {
@@ -232,6 +551,20 @@ function safeFileName(name) {
   return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").replace(/\s+/g, " ").trim().slice(0, 80) || "Nota";
 }
 
+/**
+ * Markdown -> { html, props, created } of a note. The file name (`stem`) is the title: a first
+ * heading with the same text becomes the title line, otherwise the name goes above the
+ * content. `created` = creation date from the front-matter (ms) or null. `dir` = the file's
+ * folder (relative images); `lookup` resolves images first (folder import).
+ */
+async function markdownNote(md, stem, dir, lookup = null) {
+  // Relative image paths only make sense next to the file, so resolve them before sanitizing.
+  const html = applyFileTitle(sanitizeHtml(await resolveMarkdownImages(markdownToHtml(md), dir, lookup)), stem);
+  const { yaml } = splitFrontMatter(md);
+  const { props, created } = yaml ? parseFrontMatter(yaml) : { props: normalizeProps(null), created: null };
+  return { html, props: propsEmpty(props) ? null : props, created };
+}
+
 async function importMarkdown() {
   if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
   const paths = await openFileDialogApi({ title: "Importar Markdown", filters: MD_FILTERS, multiple: true });
@@ -241,11 +574,8 @@ async function importMarkdown() {
   for (const path of paths) {
     try {
       const { dir, stem } = splitPath(path);
-      const md = await readTextFileApi(path);
-      // Relative image paths only make sense next to the file, so resolve them before sanitizing.
-      let html = sanitizeHtml(await resolveMarkdownImages(markdownToHtml(md), dir));
-      if (!/^<h[1-3][\s>]/i.test(html)) html = `<h1>${escapeHtml(stem)}</h1>${html}`;
-      lastId = addNote(html);
+      const { html, props, created } = await markdownNote(await readTextFileApi(path), stem, dir);
+      lastId = addNote(html, props, created);
     } catch (e) {
       console.error("markdown import failed", path, e);
       failed++;
@@ -253,10 +583,86 @@ async function importMarkdown() {
   }
   if (lastId !== null) {
     flushNotesSave();
+    notesChanged();
     selectNote(lastId);
   }
   const ok = paths.length - failed;
   toast(failed ? `${ok} importada(s), ${failed} com erro.` : ok === 1 ? "Nota importada." : `${ok} notas importadas.`);
+}
+
+let importingFolder = false;
+
+/**
+ * Imports a whole folder of Markdown (an Obsidian vault, a docs repo...) into a new folder
+ * named after it, under `parentId`; subfolders with notes become subfolders. Notes keep the
+ * file's date, images are copied and [[links]] by path/heading are mapped to note titles.
+ */
+async function importMarkdownFolder(parentId = scopeParentFolder()) {
+  if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
+  if (importingFolder) return toast("Uma importação já está em andamento.");
+  const dir = await openDirectoryDialogApi({ title: "Importar pasta de Markdown" });
+  if (!dir) return;
+  importingFolder = true;
+  try {
+    toast("Lendo a pasta…");
+    let scan;
+    try {
+      scan = await notesApi.scanDir(dir);
+    } catch (e) {
+      return toast(`Falha ao ler a pasta: ${e}`);
+    }
+    if (!scan.notes.length) return toast("Nenhum arquivo Markdown encontrado nessa pasta.");
+
+    const folderIds = new Set(state.folders.map((f) => f.id));
+    const makeFolder = (name, parent) => {
+      let id = Date.now();
+      while (folderIds.has(id)) id++;
+      folderIds.add(id);
+      const folder = { id, name: name.slice(0, 60), parent_id: parent };
+      state.folders.push(folder);
+      return folder;
+    };
+    const rootId = makeFolder(uniqueFolderName(state.folders, parentId, scan.name || "Importadas"), parentId).id;
+    const index = vaultIndex(scan);
+    const ids = new Set(state.notes.map((n) => n.id));
+    const zids = takenZids();
+    const sep = dir.includes("\\") ? "\\" : "/";
+    const imported = [];
+    let failed = scan.skipped.length;
+    for (const [i, file] of scan.notes.entries()) {
+      if (i % 20 === 0) toast(`Importando ${i + 1} de ${scan.notes.length}…`);
+      try {
+        const fileDir = [dir, ...relDirs(file.rel)].join(sep);
+        const md = normalizeVaultLinks(file.text, index);
+        const { html, props, created } = await markdownNote(md, relStem(file.rel), fileDir, vaultImageLookup(index, file.rel));
+        const folderId = ensureFolderPath(state.folders, rootId, relDirs(file.rel), makeFolder);
+        const time = file.modified || Date.now();
+        imported.push(newNoteObject(html, folderId, props, { time: Math.max(time, created ?? 0), created, ids, zids }));
+      } catch (e) {
+        console.error("markdown import failed", file.rel, e);
+        failed++;
+      }
+    }
+
+    state.notes.unshift(...imported);
+    saveFolders();
+    await saveNotesBulk(imported, storeError);
+    revealFolder(rootId);
+    setFolderCollapsed(rootId, false);
+    setQuery("");
+    ui.scope = `f:${rootId}`;
+    if (!state.desktopMode) ui.pane = "list";
+    titleIndex = null;
+    notesChanged();
+    const first = visibleNotes()[0];
+    if (state.desktopMode && first) selectNote(first.id, { openEditor: false });
+    else renderNotes();
+    const folders = new Set(imported.map((n) => n.folder_id)).size;
+    const ok = `${imported.length} nota(s) importada(s) em ${folders} pasta(s)`;
+    toast(failed ? `${ok}; ${failed} arquivo(s) com erro.` : `${ok}.`);
+  } finally {
+    importingFolder = false;
+  }
 }
 
 async function exportMarkdown(id) {
@@ -279,14 +685,17 @@ async function exportMarkdown(id) {
   const { dir, sep, stem } = splitPath(path);
   const assets = `${stem}.assets`;
   const names = new Set();
-  const md = htmlToMarkdown(note.content, {
-    imageSrc: (src) => {
-      const name = localImageName(src);
-      if (!name) return src;
-      names.add(name);
-      return `${assets}/${name}`;
-    },
-  });
+  const md =
+    propsToYaml(note.props, { created: note.created_at }) +
+    htmlToMarkdown(note.content, {
+      imageSrc: (src) => {
+        const name = localImageName(src);
+        if (!name) return src;
+        names.add(name);
+        return `${assets}/${name}`;
+      },
+      linkTitle: (a) => (a.dataset.note ? linkedTitle(Number(a.dataset.note)) : null) || "",
+    });
   try {
     if (names.size) await exportNoteImagesApi([...names], `${dir}${sep}${assets}`);
     await writeFileApi(path, { text: md });
@@ -297,12 +706,38 @@ async function exportMarkdown(id) {
   }
 }
 
+async function exportPdf(id) {
+  const note = findNote(id);
+  if (!note) return;
+  if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
+  try {
+    await ensureContent(note);
+  } catch (e) {
+    return toast(`Falha ao ler a nota: ${e}`);
+  }
+  const title = titleOf(note);
+  const path = await saveFileDialogApi({
+    title: "Exportar como PDF",
+    defaultPath: `${safeFileName(title)}.pdf`,
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  if (!path) return;
+  try {
+    await exportNotePdf(note.content || "", path, title);
+    toast("PDF exportado.");
+  } catch (e) {
+    console.error("pdf export failed", e);
+    toast(`Falha ao exportar: ${e?.message || e}`);
+  }
+}
+
 /** Loads folders and note metadata from notes.db (importing notes.json on the first run). */
 export async function loadNotes() {
   try {
     const { notes, folders, error } = await loadNoteStore();
     state.notes = notes;
     state.folders = folders;
+    titleIndex = null;
     if (error) toast(`Notas antigas não importadas: ${error}`);
     // Removes image files no note references anymore (trash included); the list comes from the database.
     else if (hasTauri && notes.length) collectImageGarbage();
@@ -319,7 +754,21 @@ function showMoreMenu(btn) {
   const note = selectedNote();
   showMenu(r.left, r.bottom + 4, [
     { label: "Importar Markdown…", icon: "fa-solid fa-file-import", run: importMarkdown },
+    { label: "Importar Pasta de Markdown…", icon: "fa-solid fa-folder-tree", run: () => importMarkdownFolder() },
     { label: "Exportar como Markdown…", icon: "fa-solid fa-file-export", disabled: !note, run: () => exportMarkdown(note.id) },
+    { label: "Exportar como PDF…", icon: "fa-regular fa-file-pdf", disabled: !note, run: () => exportPdf(note.id) },
+    "sep",
+    {
+      label: zk() ? "Desligar modo Zettelkasten" : "Ligar modo Zettelkasten",
+      icon: "fa-solid fa-diagram-project",
+      run: () => {
+        state.settings.zettelkasten = !zk();
+        saveSettingsApi(state.settings);
+        updateSettingsUI();
+        document.dispatchEvent(new CustomEvent("zettelkastenchange"));
+        toast(zk() ? "Modo Zettelkasten ligado: propriedades, filtros e grafo." : "Modo Zettelkasten desligado.");
+      },
+    },
   ]);
 }
 
@@ -338,6 +787,7 @@ function deleteNote(id) {
     note.pinned = false;
     saveNoteMeta([note], storeError);
   }
+  notesChanged();
 
   if (ui.selectedId === id) {
     ui.selectedId = null;
@@ -359,6 +809,7 @@ function restoreNote(id) {
   if (!allFolders().some((f) => f.id === note.folder_id)) note.folder_id = 0;
   note.updated_at = Date.now();
   saveNoteMeta([note], storeError);
+  notesChanged();
   if (ui.selectedId === id) {
     // Follows the note back to its folder, like macOS Notes.
     ui.scope = `f:${note.folder_id}`;
@@ -386,13 +837,17 @@ function moveNote(id, folderId) {
   renderNotes();
 }
 
-function createFolder() {
-  const names = new Set(allFolders().map((f) => f.name));
-  let name = "Nova Pasta";
-  for (let i = 2; names.has(name); i++) name = `Nova Pasta ${i}`;
+/** New folder inside `parentId` (0 = top level), opened in rename mode. */
+function createFolder(parentId = 0) {
+  if (!state.folders.some((f) => f.id === parentId)) parentId = 0;
+  const name = uniqueFolderName(state.folders, parentId, "Nova Pasta");
   let id = Date.now();
   while (allFolders().some((f) => f.id === id)) id++;
-  state.folders.push({ id, name });
+  state.folders.push({ id, name, parent_id: parentId });
+  if (parentId) {
+    setFolderCollapsed(parentId, false);
+    revealFolder(parentId);
+  }
   saveFolders();
   ui.editingFolderId = id;
   ui.scope = `f:${id}`;
@@ -414,40 +869,75 @@ function renameFolder(id, name) {
   renderNotes();
 }
 
+/** Deletes the folder and its subfolders; their notes go to "Apagadas Recentemente". */
 function deleteFolder(id) {
   const now = Date.now();
   const moved = [];
+  const gone = removeFolderTree(state.folders, id);
   for (const n of state.notes) {
-    if (n.folder_id === id && !n.deleted_at) {
+    if (gone.has(n.folder_id) && !n.deleted_at) {
       n.deleted_at = now;
       n.pinned = false;
       moved.push(n);
     }
   }
-  state.folders = state.folders.filter((f) => f.id !== id);
+  for (const f of gone) collapsedFolders.delete(f);
   saveFolders();
   saveNoteMeta(moved, storeError);
-  if (ui.scope === `f:${id}`) setScope("all");
+  notesChanged();
+  if (gone.has(scopeFolderId())) setScope("all");
   else renderNotes();
 }
 
+/** Moves a folder (with its subfolders) into `parentId` (0 = top level). */
+function moveFolder(id, parentId) {
+  const folder = state.folders.find((f) => f.id === id);
+  if (!folder || (folder.parent_id || 0) === parentId || !canMoveFolder(state.folders, id, parentId)) return;
+  folder.parent_id = parentId;
+  // Last among the new siblings.
+  state.folders = [...state.folders.filter((f) => f !== folder), folder];
+  if (parentId) {
+    setFolderCollapsed(parentId, false);
+    revealFolder(parentId);
+  }
+  saveFolders();
+  renderNotes();
+}
+
 // ---------- Rendering ----------
+
+/** Notes per folder, counting the subfolders' notes too. */
+function folderCounts(active) {
+  const counts = new Map();
+  for (const n of active) counts.set(n.folder_id, (counts.get(n.folder_id) || 0) + 1);
+  // Pre-order list reversed: children are added to their parent before it is read.
+  for (const { folder } of flattenTree(state.folders).reverse()) {
+    if (folder.parent_id) counts.set(folder.parent_id, (counts.get(folder.parent_id) || 0) + (counts.get(folder.id) || 0));
+  }
+  return counts;
+}
 
 function renderFolders() {
   foldersEl.innerHTML = "";
   const active = state.notes.filter((n) => !n.deleted_at);
   const trashCount = state.notes.length - active.length;
+  const counts = folderCounts(active);
+  const folderEntry = ({ folder: f, depth, hasChildren }) => ({
+    scope: `f:${f.id}`,
+    folderId: f.id,
+    name: f.name,
+    icon: "fa-regular fa-folder",
+    count: counts.get(f.id) || 0,
+    editable: f.id !== 0,
+    depth,
+    hasChildren,
+  });
 
   const entries = [
     { scope: "all", name: "Todas as Notas", icon: "fa-regular fa-folder-open", count: active.length },
-    ...allFolders().map((f) => ({
-      scope: `f:${f.id}`,
-      folderId: f.id,
-      name: f.name,
-      icon: "fa-regular fa-folder",
-      count: active.filter((n) => n.folder_id === f.id).length,
-      editable: f.id !== 0,
-    })),
+    ...(zk() ? [{ scope: "graph", name: "Grafo", icon: "fa-solid fa-circle-nodes", count: "" }] : []),
+    folderEntry({ folder: DEFAULT_FOLDER, depth: 0, hasChildren: false }),
+    ...flattenTree(state.folders, collapsedFolders).map(folderEntry),
   ];
   if (trashCount > 0 || ui.scope === "trash") {
     entries.push({ scope: "trash", name: "Apagadas Recentemente", icon: "fa-regular fa-trash-can", count: trashCount });
@@ -458,6 +948,23 @@ function renderFolders() {
     li.className = "nt-folder";
     li.dataset.scope = entry.scope;
     li.classList.toggle("active", ui.scope === entry.scope && !ui.query.trim());
+    if (entry.depth) li.style.setProperty("--depth", entry.depth);
+
+    // Subfolders: caret to collapse/expand (empty slot keeps the icons aligned).
+    const caret = document.createElement("span");
+    caret.className = "nt-folder-caret";
+    if (entry.hasChildren) {
+      const open = !collapsedFolders.has(entry.folderId);
+      caret.innerHTML = `<i class="fa-solid fa-chevron-right"></i>`;
+      caret.classList.toggle("open", open);
+      caret.title = open ? "Recolher" : "Expandir";
+      caret.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setFolderCollapsed(entry.folderId, open);
+        renderFolders();
+      });
+    }
+    li.appendChild(caret);
 
     const icon = document.createElement("i");
     icon.className = `${entry.icon} nt-folder-icon`;
@@ -506,7 +1013,7 @@ function renderFolders() {
     chevron.className = "fa-solid fa-chevron-right nt-folder-chevron";
     li.appendChild(chevron);
 
-    li.addEventListener("click", () => setScope(entry.scope));
+    li.addEventListener("click", () => (entry.scope === "graph" ? openGraph({ local: false }) : setScope(entry.scope)));
     if (entry.editable) {
       li.addEventListener("dblclick", () => {
         ui.editingFolderId = entry.folderId;
@@ -519,8 +1026,24 @@ function renderFolders() {
     });
 
     if (entry.folderId !== undefined) {
+      // Real folders can be dragged into another folder (or onto "Notas" = top level).
+      if (entry.editable) {
+        li.draggable = true;
+        li.addEventListener("dragstart", (e) => {
+          draggedFolderId = entry.folderId;
+          e.dataTransfer.setData("application/x-folder-id", String(entry.folderId));
+          e.dataTransfer.effectAllowed = "move";
+        });
+        li.addEventListener("dragend", () => (draggedFolderId = null));
+      }
+      const accepts = (e) => {
+        const types = e.dataTransfer.types;
+        if (types.includes("application/x-note-id")) return true;
+        // The id isn't readable during dragover, hence draggedFolderId.
+        return types.includes("application/x-folder-id") && draggedFolderId !== null && canMoveFolder(state.folders, draggedFolderId, entry.folderId);
+      };
       li.addEventListener("dragover", (e) => {
-        if (!e.dataTransfer.types.includes("application/x-note-id")) return;
+        if (!accepts(e)) return;
         e.preventDefault();
         li.classList.add("drop-target");
       });
@@ -528,8 +1051,10 @@ function renderFolders() {
       li.addEventListener("drop", (e) => {
         e.preventDefault();
         li.classList.remove("drop-target");
-        const id = Number(e.dataTransfer.getData("application/x-note-id"));
-        if (id) moveNote(id, entry.folderId);
+        const noteId = Number(e.dataTransfer.getData("application/x-note-id"));
+        const folderId = Number(e.dataTransfer.getData("application/x-folder-id"));
+        if (noteId) moveNote(noteId, entry.folderId);
+        else if (folderId) moveFolder(folderId, entry.folderId);
       });
     }
 
@@ -569,7 +1094,7 @@ function renderListItem(note, showFolder) {
     const folder = document.createElement("div");
     folder.className = "nt-item-folder";
     folder.innerHTML = `<i class="fa-regular fa-folder"></i>`;
-    folder.append(note.deleted_at ? "Apagadas Recentemente" : folderName(note.folder_id));
+    folder.append(note.deleted_at ? "Apagadas Recentemente" : folderLabel(note.folder_id));
     item.appendChild(folder);
   }
 
@@ -591,7 +1116,9 @@ function renderListItem(note, showFolder) {
 
 function renderList() {
   const notes = visibleNotes();
-  const showFolder = ui.scope === "all" || !!ui.query.trim();
+  const fid = scopeFolderId();
+  // A folder's list also has its subfolders' notes: those show where they are.
+  const showFolder = (n) => ui.scope === "all" || !!ui.query.trim() || (fid !== null && n.folder_id !== fid);
   listEl.innerHTML = "";
 
   if (!notes.length) {
@@ -620,10 +1147,10 @@ function renderList() {
       groupEl.className = "nt-group";
       listEl.append(header, groupEl);
     }
-    groupEl.appendChild(renderListItem(note, showFolder));
+    groupEl.appendChild(renderListItem(note, showFolder(note)));
   }
 
-  const label = scopeLabel();
+  const label = ui.scope === "graph" ? "Grafo" : scopeLabel();
   const count = pluralNotes(notes.length);
   listTitleEl.textContent = label;
   tbFolderEl.textContent = label;
@@ -633,7 +1160,12 @@ function renderList() {
 }
 
 function renderChrome() {
+  if (ui.scope === "graph" && !zk()) ui.scope = "all";
+  if (ui.pane === "graph" && ui.scope !== "graph") ui.pane = "list";
+  if (!state.desktopMode && ui.scope === "graph") ui.pane = "graph";
   appEl.dataset.pane = ui.pane;
+  appEl.dataset.view = ui.scope === "graph" ? "graph" : "";
+  appEl.classList.toggle("zettel", zk());
   appEl.classList.toggle("sidebar-hidden", ui.sidebarHidden);
   const editing = state.activeMainView === "notes" && !state.desktopMode && ui.pane === "editor";
   document.body.classList.toggle("notes-editing", editing);
@@ -646,6 +1178,8 @@ function renderChrome() {
   appEl.querySelectorAll('[data-action="delete-note"]').forEach((btn) => (btn.disabled = !note));
   const readOnly = !note || !!note.deleted_at;
   appEl.querySelectorAll("[data-cmd], [data-popover]").forEach((btn) => (btn.disabled = readOnly));
+  appEl.querySelectorAll('[data-action="graph-local"]').forEach((btn) => (btn.disabled = !note || !!note.deleted_at));
+  syncGraph();
 }
 
 export function renderNotes() {
@@ -663,6 +1197,48 @@ function queueListRender() {
   });
 }
 
+/**
+ * Header above the note: creation date (editable; saved with the note, exported as
+ * `created:`) and the last edit. Only the edit time is refreshed while typing.
+ */
+function renderEditorDate(note) {
+  let input = editorDateEl.querySelector(".nt-created-input");
+  if (!input || editorDateEl.dataset.id !== String(note.id)) {
+    editorDateEl.dataset.id = note.id;
+    input = document.createElement("input");
+    input.type = "date";
+    input.className = "nt-created-input";
+    input.title = "Data de criação";
+    input.addEventListener("keydown", (e) => e.stopPropagation());
+    input.addEventListener("click", () => {
+      try {
+        input.showPicker();
+      } catch {}
+    });
+    input.addEventListener("change", () => {
+      const n = findNote(Number(editorDateEl.dataset.id));
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.value);
+      if (!n || !m || n.deleted_at || n.content === undefined) return renderEditorDate(n || note);
+      // Keeps the time of day; only the day changes.
+      const d = new Date(n.created_at || n.id);
+      const base = Number.isNaN(d.getTime()) ? new Date() : d;
+      n.created_at = new Date(+m[1], +m[2] - 1, +m[3], base.getHours(), base.getMinutes(), base.getSeconds()).toISOString();
+      n.dirty = true;
+      saveNotesSoon();
+    });
+    const created = document.createElement("label");
+    created.className = "nt-created";
+    created.append("Criada em ", input);
+    const updated = document.createElement("span");
+    updated.className = "nt-updated";
+    editorDateEl.replaceChildren(created, document.createTextNode(" · "), updated);
+  }
+  const value = dateOnly(note.created_at || note.id);
+  if (document.activeElement !== input) input.value = value;
+  input.disabled = !!note.deleted_at || note.content === undefined;
+  editorDateEl.querySelector(".nt-updated").textContent = `Editada em ${formatNoteFullDate(note.updated_at)}`;
+}
+
 function loadSelectedIntoEditor({ focus = false } = {}) {
   const note = selectedNote();
   closePopover();
@@ -670,11 +1246,31 @@ function loadSelectedIntoEditor({ focus = false } = {}) {
   editorEmptyEl.hidden = !!note;
   trashBannerEl.hidden = !note?.deleted_at;
   const seq = ++editorLoadSeq;
-  if (!note) return;
-  editorDateEl.textContent = formatNoteFullDate(note.updated_at);
-  const open = () => loadEditor(note.content, { readOnly: !!note.deleted_at, focus, key: note.id });
+  lastTitle = note && note.content !== undefined ? titleOf(note) : null;
+  if (!note) {
+    propsPanel?.hide();
+    linksPanel?.hide();
+    return;
+  }
+  renderEditorDate(note);
+  const open = () => {
+    const updated = loadEditor(note.content, { readOnly: !!note.deleted_at, focus, key: note.id });
+    if (updated !== null) {
+      // Links renomeados/resolvidos ao abrir: grava sem mexer na data da nota.
+      note.content = updated;
+      note.links = noteLinks(updated);
+      note.dirty = true;
+      saveNotesSoon();
+    }
+    lastTitle = titleOf(note);
+    renderEditorDate(note); // libera a data de criação (conteúdo carregado)
+    renderPropsPanel();
+    renderLinksPanel();
+  };
   if (note.content !== undefined) return open();
   // HTML comes from notes.db the first time the note is opened.
+  propsPanel?.hide();
+  linksPanel?.hide();
   loadEditor("", { readOnly: true });
   ensureContent(note)
     .then(() => seq === editorLoadSeq && ui.selectedId === note.id && open())
@@ -687,7 +1283,18 @@ function handleEditorInput(html) {
   note.content = html;
   note.dirty = true;
   note.updated_at = Date.now();
-  editorDateEl.textContent = formatNoteFullDate(note.updated_at);
+  renderEditorDate(note);
+  const links = noteLinks(html);
+  const linksChanged = links.length !== (note.links?.length || 0) || links.some((l, i) => l !== note.links[i]);
+  note.links = links;
+  const title = titleOf(note);
+  if (title !== lastTitle) {
+    lastTitle = title;
+    titleIndex = null;
+  }
+  if (linksChanged) queueLinksPanel();
+  propsPanel?.place(); // o título (1º bloco) pode ter mudado de altura, inclusive ao desfazer
+  if (ensureZid(note)) renderPropsPanel();
   saveNotesSoon();
   queueListRender();
 }
@@ -749,6 +1356,7 @@ function showMenu(x, y, items) {
     btn.className = "nt-menu-item";
     btn.classList.toggle("danger", !!item.danger);
     btn.classList.toggle("indent", !!item.indent);
+    if (item.depth) btn.style.setProperty("--depth", item.depth);
     btn.disabled = !!item.disabled;
     btn.innerHTML = `<i class="${item.icon || ""}"></i>`;
     btn.append(item.label);
@@ -775,6 +1383,7 @@ function showNoteMenu(x, y, note) {
     showMenu(x, y, [
       { label: "Recuperar", icon: "fa-solid fa-rotate-left", run: () => restoreNote(note.id) },
       { label: "Exportar como Markdown…", icon: "fa-solid fa-file-export", run: () => exportMarkdown(note.id) },
+    { label: "Exportar como PDF…", icon: "fa-regular fa-file-pdf", run: () => exportPdf(note.id) },
       "sep",
       { label: "Apagar Permanentemente", icon: "fa-regular fa-trash-can", danger: true, run: () => deleteNote(note.id) },
     ]);
@@ -788,34 +1397,49 @@ function showNoteMenu(x, y, note) {
     },
     "sep",
     { header: "Mover para" },
-    ...allFolders().map((f) => ({
+    ...folderTreeEntries().map(({ folder: f, depth }) => ({
       label: f.name,
       icon: "fa-regular fa-folder",
       indent: true,
+      depth,
       disabled: f.id === note.folder_id,
       run: () => moveNote(note.id, f.id),
     })),
     "sep",
     { label: "Exportar como Markdown…", icon: "fa-solid fa-file-export", run: () => exportMarkdown(note.id) },
+    { label: "Exportar como PDF…", icon: "fa-regular fa-file-pdf", run: () => exportPdf(note.id) },
+    ...(zk()
+      ? [{ label: "Grafo local", icon: "fa-solid fa-circle-nodes", run: () => (selectNote(note.id, { openEditor: false }), openGraph({ local: true })) }]
+      : []),
     "sep",
     { label: "Apagar", icon: "fa-regular fa-trash-can", danger: true, run: () => deleteNote(note.id) },
   ]);
 }
 
 function showFolderMenu(x, y, entry) {
+  const parent = entry.editable ? entry.folderId : 0;
   const items = [
-    { label: "Nova Pasta", icon: "fa-solid fa-folder-plus", run: createFolder },
+    { label: "Nova Pasta", icon: "fa-solid fa-folder-plus", run: () => createFolder() },
+    ...(entry.editable ? [{ label: "Nova Subpasta", icon: "fa-solid fa-folder-tree", run: () => createFolder(entry.folderId) }] : []),
+    "sep",
     {
       label: "Importar Markdown…",
       icon: "fa-solid fa-file-import",
       run: () => {
-        if (entry.scope !== "trash") ui.scope = entry.scope;
+        if (entry.scope !== "trash" && entry.scope !== "graph") ui.scope = entry.scope;
         importMarkdown();
       },
     },
+    {
+      label: entry.editable ? "Importar Pasta de Markdown Aqui…" : "Importar Pasta de Markdown…",
+      icon: "fa-solid fa-folder-tree",
+      run: () => importMarkdownFolder(parent),
+    },
   ];
   if (entry.editable) {
+    const folder = state.folders.find((f) => f.id === entry.folderId);
     items.push(
+      "sep",
       {
         label: "Renomear Pasta",
         icon: "fa-solid fa-pen",
@@ -824,8 +1448,16 @@ function showFolderMenu(x, y, entry) {
           renderNotes();
         },
       },
+      ...(folder?.parent_id
+        ? [{ label: "Mover para o Nível Superior", icon: "fa-solid fa-arrow-turn-up", run: () => moveFolder(entry.folderId, 0) }]
+        : []),
       "sep",
-      { label: "Apagar Pasta", icon: "fa-regular fa-trash-can", danger: true, run: () => deleteFolder(entry.folderId) },
+      {
+        label: entry.hasChildren ? "Apagar Pasta e Subpastas" : "Apagar Pasta",
+        icon: "fa-regular fa-trash-can",
+        danger: true,
+        run: () => deleteFolder(entry.folderId),
+      },
     );
   }
   showMenu(x, y, items);
@@ -835,6 +1467,7 @@ function showFolderMenu(x, y, entry) {
 function openCompactHome() {
   discardIfEmpty(ui.selectedId);
   flushNotesSave();
+  if (ui.scope === "graph") return renderNotes(); // volta para o grafo onde estava
   ui.scope = "all";
   ui.query = "";
   searchInputs.forEach((i) => (i.value = ""));
@@ -852,7 +1485,8 @@ const ACTIONS = {
   "delete-note": () => ui.selectedId !== null && deleteNote(ui.selectedId),
   restore: () => ui.selectedId !== null && restoreNote(ui.selectedId),
   pin: () => ui.selectedId !== null && togglePin(ui.selectedId),
-  "new-folder": createFolder,
+  "new-folder": () => createFolder(),
+  "import-folder": () => importMarkdownFolder(),
   "show-folders": () => {
     ui.pane = "folders";
     renderNotes();
@@ -873,6 +1507,7 @@ const ACTIONS = {
   minimize: minimizeWindow,
   maximize: toggleMaximize,
   more: showMoreMenu,
+  "graph-local": () => ui.selectedId !== null && openGraph({ local: true }),
 };
 
 function moveSelection(delta) {
@@ -891,6 +1526,15 @@ function handleGlobalKeydown(e) {
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
 
+  if (e.altKey && !mod && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (navigate(e.key === "ArrowLeft" ? -1 : 1)) e.preventDefault();
+    return;
+  }
+  if (mod && e.shiftKey && key === "g" && zk()) {
+    e.preventDefault();
+    return ui.scope === "graph" ? restoreLocation({ scope: graphReturnScope, query: "", id: ui.selectedId }) : openGraph();
+  }
+
   if (e.key === "Escape") {
     if (!menuEl.hidden) return closeMenu();
     if (!popoverEl.hidden) return closePopover();
@@ -900,6 +1544,11 @@ function handleGlobalKeydown(e) {
       return renderNotes();
     }
     if (!state.desktopMode && ui.pane === "editor") return ACTIONS["show-list"]();
+    if (ui.scope === "graph" && !graphEl.contains(document.activeElement)) {
+      ui.scope = graphReturnScope;
+      if (!state.desktopMode) ui.pane = "folders";
+      return renderNotes();
+    }
     return;
   }
   if (mod && !e.shiftKey && key === "n") {
@@ -909,6 +1558,7 @@ function handleGlobalKeydown(e) {
   if (mod && !e.shiftKey && key === "f") {
     e.preventDefault();
     const input = state.desktopMode ? searchInputs[0] : searchInputs[1];
+    if (ui.scope === "graph") return graph?.focusSearch();
     if (!state.desktopMode && ui.pane !== "list") {
       ui.pane = "list";
       renderNotes();
@@ -919,7 +1569,44 @@ function handleGlobalKeydown(e) {
 }
 
 export function initNotes() {
+  setLinkProvider({
+    index: getIndex,
+    titleOf: linkedTitle,
+    folderOf: (id) => {
+      const n = findNote(id);
+      return n ? folderLabel(n.folder_id) : "";
+    },
+    peek: (id) => {
+      const n = findNote(id);
+      if (!n || n.deleted_at) return null;
+      return { ...noteInfo(n), tags: zk() ? n.props?.tags || [] : [] };
+    },
+    open: openLinkedNote,
+    create: createLinkedNote,
+    currentId: () => ui.selectedId,
+  });
   initEditor({ onInput: handleEditorInput, onSelection: handleSelectionState });
+  propsPanel = createPropsPanel(document.getElementById("nt-props"), {
+    editor: document.getElementById("nt-editor"),
+    onChange: handlePropsChange,
+    tags: () => tagCounts(state.notes),
+    onTagClick: openTagSearch,
+  });
+  linksPanel = createLinksPanel(document.getElementById("nt-backlinks"), {
+    open: openLinkedNote,
+    create: (title) => openLinkedNote(createLinkedNote(title)),
+  });
+
+  document.addEventListener("zettelkastenchange", () => {
+    if (!zk() && ui.scope === "graph") ui.scope = graphReturnScope;
+    if (zk()) {
+      const note = selectedNote();
+      if (note && note.content !== undefined && ensureZid(note)) handlePropsChange(note);
+    }
+    renderNotes();
+    renderPropsPanel();
+    if (ui.query.trim()) runSearch();
+  });
 
   appEl.addEventListener("mousedown", (e) => {
     // Toolbar buttons must not take the caret away from the editor.
@@ -975,7 +1662,7 @@ export function initNotes() {
   document.addEventListener("mainviewchange", () => {
     if (state.activeMainView !== "notes") {
       closePopover();
-      renderChrome();
+      renderChrome(); // esconde o grafo (para a animação)
       return;
     }
     if (!state.desktopMode) openCompactHome();

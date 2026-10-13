@@ -144,7 +144,7 @@ SELECT c.name, TYPE_NAME(c.user_type_id), CAST(c.max_length AS bigint), CAST(c.p
   c.is_nullable, c.is_identity, c.is_computed, CAST(CASE WHEN c.default_object_id <> 0 THEN 1 ELSE 0 END AS bit), \
   CAST(CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS bit), \
   rs.name, rt.name, rc.name, dc.definition, cc.definition, \
-  CAST(IDENT_SEED(@P1) AS bigint), CAST(IDENT_INCR(@P1) AS bigint) \
+  CAST(IDENT_SEED(@P1) AS bigint), CAST(IDENT_INCR(@P1) AS bigint), dc.name \
 FROM sys.columns c \
 LEFT JOIN (SELECT ic.column_id FROM sys.indexes i \
            JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
@@ -163,6 +163,7 @@ struct ColumnRow {
     col: TableColumn,
     default_def: String,
     computed_def: String,
+    default_name: String,
     ident: (i64, i64),
 }
 
@@ -188,6 +189,7 @@ async fn column_rows(client: &mut Conn, schema: &str, name: &str) -> DbResult<Ve
                 },
                 default_def: text(r, 13),
                 computed_def: text(r, 14),
+                default_name: text(r, 17),
                 ident: (int(r, 15).unwrap_or(1), int(r, 16).unwrap_or(1)),
             }
         })
@@ -302,6 +304,125 @@ async fn parameters(client: &mut Conn, schema: &str, name: &str) -> DbResult<Vec
             }
         })
         .collect())
+}
+
+// ---------- Estrutura editável ----------
+
+/// "CASCADE", "SET_NULL" → "SET NULL"...
+fn referential(desc: &str) -> String {
+    desc.replace('_', " ")
+}
+
+pub async fn table_schema(client: &mut Conn, schema: &str, name: &str) -> DbResult<TableSchema> {
+    let obj = qualified(schema, name);
+    let kind = rows(client, "SELECT type FROM sys.objects WHERE object_id = OBJECT_ID(@P1)", &[&obj.as_str()]).await?;
+    match kind.first().map(|r| text(r, 0)) {
+        None => return Err(format!("Tabela {obj} não encontrada")),
+        Some(t) if t.trim() != "U" => return Err(format!("{obj} não é uma tabela")),
+        _ => {}
+    }
+
+    let columns = column_rows(client, schema, name)
+        .await?
+        .into_iter()
+        .map(|c| SchemaColumn {
+            name: c.col.name,
+            full_type: c.col.full_type,
+            nullable: c.col.nullable,
+            identity: c.col.is_identity,
+            seed: c.ident.0,
+            increment: c.ident.1,
+            computed: c.computed_def,
+            default: c.default_def,
+            default_name: c.default_name,
+        })
+        .collect();
+
+    let index_cols = rows(
+        client,
+        "SELECT ic.index_id, c.name, ic.is_descending_key, ic.is_included_column          FROM sys.index_columns ic JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id          WHERE ic.object_id = OBJECT_ID(@P1) ORDER BY ic.index_id, ic.is_included_column, ic.key_ordinal, ic.index_column_id",
+        &[&obj.as_str()],
+    )
+    .await?;
+    let mut indexes = Vec::new();
+    for r in rows(
+        client,
+        "SELECT i.index_id, i.name, i.is_unique, i.is_primary_key, i.is_unique_constraint, i.type_desc, i.filter_definition          FROM sys.indexes i WHERE i.object_id = OBJECT_ID(@P1) AND i.type > 0 ORDER BY i.is_primary_key DESC, i.index_id",
+        &[&obj.as_str()],
+    )
+    .await?
+    {
+        let id = r.try_get::<i32, _>(0).ok().flatten().unwrap_or(-1);
+        let type_desc = text(&r, 5);
+        let kind = if flag(&r, 3) {
+            "pk"
+        } else if flag(&r, 4) {
+            "unique"
+        } else if type_desc != "CLUSTERED" && type_desc != "NONCLUSTERED" {
+            "other"
+        } else if flag(&r, 2) {
+            "uindex"
+        } else {
+            "index"
+        };
+        let mine = index_cols.iter().filter(|c| c.try_get::<i32, _>(0).ok().flatten() == Some(id));
+        let (mut cols, mut include) = (Vec::new(), Vec::new());
+        for c in mine {
+            if flag(c, 3) {
+                include.push(text(c, 1));
+            } else {
+                cols.push(IndexColumn { name: text(c, 1), desc: flag(c, 2) });
+            }
+        }
+        indexes.push(SchemaIndex {
+            name: text(&r, 1),
+            kind: kind.into(),
+            clustered: type_desc.starts_with("CLUSTERED"),
+            columns: cols,
+            include,
+            filter: text(&r, 6),
+            type_desc,
+        });
+    }
+
+    let fk_cols = rows(
+        client,
+        "SELECT CAST(k.constraint_object_id AS bigint), pc.name, rc.name FROM sys.foreign_key_columns k          JOIN sys.columns pc ON pc.object_id = k.parent_object_id AND pc.column_id = k.parent_column_id          JOIN sys.columns rc ON rc.object_id = k.referenced_object_id AND rc.column_id = k.referenced_column_id          WHERE k.parent_object_id = OBJECT_ID(@P1) ORDER BY k.constraint_object_id, k.constraint_column_id",
+        &[&obj.as_str()],
+    )
+    .await?;
+    let fks = rows(
+        client,
+        "SELECT CAST(fk.object_id AS bigint), fk.name, rs.name, rt.name, fk.delete_referential_action_desc, fk.update_referential_action_desc          FROM sys.foreign_keys fk          JOIN sys.objects rt ON rt.object_id = fk.referenced_object_id          JOIN sys.schemas rs ON rs.schema_id = rt.schema_id          WHERE fk.parent_object_id = OBJECT_ID(@P1) ORDER BY fk.name",
+        &[&obj.as_str()],
+    )
+    .await?
+    .iter()
+    .map(|r| {
+        let mine: Vec<&Row> = fk_cols.iter().filter(|c| int(c, 0) == int(r, 0)).collect();
+        SchemaFk {
+            name: text(r, 1),
+            columns: mine.iter().map(|c| text(c, 1)).collect(),
+            ref_schema: text(r, 2),
+            ref_table: text(r, 3),
+            ref_columns: mine.iter().map(|c| text(c, 2)).collect(),
+            on_delete: referential(&text(r, 4)),
+            on_update: referential(&text(r, 5)),
+        }
+    })
+    .collect();
+
+    let checks = rows(
+        client,
+        "SELECT name, definition FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(@P1) ORDER BY name",
+        &[&obj.as_str()],
+    )
+    .await?
+    .iter()
+    .map(|r| SchemaCheck { name: text(r, 0), definition: text(r, 1) })
+    .collect();
+
+    Ok(TableSchema { schema: schema.to_string(), name: name.to_string(), columns, indexes, fks, checks })
 }
 
 // ---------- DDL ----------

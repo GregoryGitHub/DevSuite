@@ -27,6 +27,10 @@ export const notesApi = {
   get: (id) => invoke("notes_get", { id }),
   /** Grava uma nota completa: { ...meta, content, plain, images }. */
   save: (note) => invoke("notes_save", { note }),
+  /** Grava várias notas numa transação (importação de pasta). */
+  saveMany: (notes) => invoke("notes_save_many", { notes }),
+  /** Lê uma pasta recursivamente: { name, notes: [{ rel, path, text, modified }], files: [{ rel, path }], skipped }. */
+  scanDir: (dir) => invoke("notes_scan_dir", { dir }),
   /** Atualiza fixada/pasta/lixeira/data de várias notas sem reenviar o HTML. */
   setMeta: (notes) => invoke("notes_set_meta", { notes }),
   delete: (ids) => invoke("notes_delete", { ids }),
@@ -131,6 +135,16 @@ export async function openFileDialogApi({ filters, title, multiple = false } = {
   }
 }
 
+export async function openDirectoryDialogApi({ title } = {}) {
+  try {
+    const path = await invoke("plugin:dialog|open", { options: { multiple: false, directory: true, title } });
+    return Array.isArray(path) ? path[0] ?? null : path ?? null;
+  } catch (e) {
+    console.error("open dialog failed", e);
+    return null;
+  }
+}
+
 export async function saveFileDialogApi({ defaultPath, filters, title } = {}) {
   try {
     return (await invoke("plugin:dialog|save", { options: { defaultPath, filters, title } })) ?? null;
@@ -163,6 +177,11 @@ export function importNoteImageApi(path) {
 
 export function exportNoteImagesApi(names, dir) {
   return invoke("export_note_images", { names, dir });
+}
+
+/** Imprime a webview direto num PDF (só o que aparece na mídia print: #note-print). */
+export function notesPrintPdfApi(path) {
+  return invoke("notes_print_pdf", { path });
 }
 
 // ---------- Banco de dados (aba estilo DataGrip) ----------
@@ -205,6 +224,7 @@ export const dbApi = {
   introspect: (target, path) => invoke("db_introspect", { target, path }),
   tableInfo: (target, schema, name) => invoke("db_table_info", { target, schema, name }),
   ddl: (target, path) => invoke("db_ddl", { target, path }),
+  tableSchema: (target, schema, name) => invoke("db_table_schema", { target, schema, name }),
   /** `onEvent` recebe ResultStart/Rows/ResultEnd enquanto a consulta roda; resolve com o resumo. */
   execute(target, queryId, sql, { maxRows = null, onEvent }) {
     requireTauri();
@@ -215,4 +235,50 @@ export const dbApi = {
   cancel: (queryId) => invoke("db_cancel", { queryId }).catch(() => {}),
   tx: (target, action) => invoke("db_tx", { target, action }),
   apply: (target, statements, atomic = true) => invoke("db_apply", { target, statements, atomic }),
+};
+
+// ---------- RabbitMQ (rabbit.db + API de management + AMQP; ver src-tauri/src/rabbit/) ----------
+
+/** Os comandos rejeitam com uma mensagem legível (string). */
+export const rabbitApi = {
+  load: () => invoke("rmq_load"),
+  saveConnections: (connections) => invoke("rmq_save_connections", { connections }),
+  saveMeta: (key, value) => invoke("rmq_save_meta", { key, value }),
+  setPassword: (connId, password) => invoke("rmq_set_password", { connId, password }),
+  hasPassword: (connId) => invoke("rmq_has_password", { connId }).catch(() => false),
+  forgetPassword: (connId) => invoke("rmq_forget_password", { connId }).catch(() => {}),
+  /** Chamada à API HTTP do management: path sem "/api" (segmentos já codificados). */
+  http(conn, method, path, body = null, password = null) {
+    requireTauri();
+    return invoke("rmq_http", { conn, method, path, body, password });
+  },
+  test(conn, password = null, vhost = null) {
+    requireTauri();
+    return invoke("rmq_test", { conn, password, vhost });
+  },
+  move: (conn, spec) => invoke("rmq_move", { conn, spec }),
+  openMgmt: (conn) => invoke("rmq_open_mgmt", { conn }),
+  /** onEvent recebe { kind: progress | warning | stopped, capture_id, ... }. */
+  captureStart(conn, spec, onEvent) {
+    requireTauri();
+    const ch = new window.__TAURI__.core.Channel();
+    ch.onmessage = onEvent;
+    return invoke("rmq_capture_start", { conn, spec, onEvent: ch });
+  },
+  captureStop: (captureId) => invoke("rmq_capture_stop", { captureId }),
+  captureAttach(captureId, onEvent) {
+    const ch = new window.__TAURI__.core.Channel();
+    ch.onmessage = onEvent;
+    return invoke("rmq_capture_attach", { captureId, onEvent: ch });
+  },
+  captures: (connId = null) => invoke("rmq_captures", { connId }),
+  captureRename: (captureId, name) => invoke("rmq_capture_rename", { captureId, name }),
+  captureDelete: (captureId) => invoke("rmq_capture_delete", { captureId }),
+  query: (filter) => invoke("rmq_messages_query", { filter }),
+  message: (id) => invoke("rmq_message_get", { id }),
+  messages: (ids) => invoke("rmq_messages_get", { ids }),
+  deleteMessages: (ids) => invoke("rmq_messages_delete", { ids }),
+  deleteMatching: (filter) => invoke("rmq_messages_delete_matching", { filter }),
+  saveMessages: (messages, maxBodyKb = null) => invoke("rmq_messages_save", { messages, maxBodyKb }),
+  stats: () => invoke("rmq_store_stats"),
 };

@@ -30,6 +30,19 @@ bson = "2.15"
 rand = "0.9"
 # Notas e pastas (notes.db): SQLite embutido no binário, com FTS5 para a busca.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# RabbitMQ: AMQP 0-9-1 (captura ao vivo, mover/republicar com transação). A gestão usa a API HTTP do plugin de management (reqwest).
+amqprs = { version = "2.1", features = ["tls"] }
+amqp_serde = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+# Exportar notas em PDF (note_pdf.rs): mesmas versões usadas pelo Tauri/wry.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+webkit2gtk = "2.0"
+gtk = "0.18"
 
 [profile.release]
 panic = "abort"

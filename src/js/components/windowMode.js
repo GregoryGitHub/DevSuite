@@ -2,7 +2,7 @@ import { state } from "../state.js";
 import { setDesktopModeApi, minimizeWindowApi, toggleMaximizeApi } from "../api.js";
 import { showMainView } from "../navigation.js";
 
-// Tray mode (compact window by the tray) <-> desktop mode (large Tasks/Notes/HTTP/JSON/DB window).
+// Tray mode (compact window by the tray) <-> desktop mode (large Tasks/Notes/HTTP/JSON/DB/RabbitMQ window).
 
 /** Views reachable from the desktop toolbar switcher (in order). */
 const DESKTOP_VIEWS = [
@@ -11,6 +11,7 @@ const DESKTOP_VIEWS = [
   { view: "http", title: "HTTP", icon: "fa-solid fa-paper-plane" },
   { view: "json", title: "Formatter JSON", icon: "fa-solid fa-code" },
   { view: "db", title: "Banco de dados", icon: "fa-solid fa-database" },
+  { view: "rabbit", title: "RabbitMQ", icon: "fa-solid fa-envelopes-bulk" },
 ];
 
 function notifyChange() {

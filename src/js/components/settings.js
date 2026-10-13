@@ -5,6 +5,7 @@ import { showMainView } from "../navigation.js";
 const bottomNav = document.getElementById("bottom-nav");
 const settingAutostart = document.getElementById("setting-autostart");
 const settingStartMinimized = document.getElementById("setting-start-minimized");
+const settingZettelkasten = document.getElementById("setting-zettelkasten");
 
 export function initSettings() {
   settingAutostart.addEventListener("change", () => {
@@ -15,6 +16,12 @@ export function initSettings() {
   settingStartMinimized.addEventListener("change", () => {
     state.settings.start_minimized = settingStartMinimized.checked;
     saveSettingsApi(state.settings);
+  });
+
+  settingZettelkasten.addEventListener("change", () => {
+    state.settings.zettelkasten = settingZettelkasten.checked;
+    saveSettingsApi(state.settings);
+    document.dispatchEvent(new CustomEvent("zettelkastenchange"));
   });
 
   bottomNav.addEventListener("click", (e) => {
@@ -31,4 +38,5 @@ export function initSettings() {
 export function updateSettingsUI() {
   settingAutostart.checked = !!state.settings.autostart;
   settingStartMinimized.checked = !!state.settings.start_minimized;
+  settingZettelkasten.checked = !!state.settings.zettelkasten;
 }

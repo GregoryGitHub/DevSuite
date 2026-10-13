@@ -1,11 +1,14 @@
 import { sanitizeHtml, escapeHtml, imageHtml } from "../utils/noteContent.js";
-import { storeImageBlob, storeDataImages } from "../utils/noteImages.js";
+import { storeImageBlob, storeDataImages, resolveMarkdownImages } from "../utils/noteImages.js";
+import { markdownKind, markdownToHtml, inlineMarkdown } from "../utils/markdown.js";
 import { openHistory, recordHistory, amendHistory, recordSelection, sealHistory, stepHistory } from "./noteHistory.js";
 import {
   initCodeBlocks, hydrateCodeBlocks, serializeEditorHtml, serializeRange, createCodeBlock, startEdit as editCodeBlock,
   isCodeBlock, codeBlockOf, preText, lastCodeLang,
 } from "./noteCode.js";
 import { initNoteMenus } from "./noteMenus.js";
+import { hydrateLinks, followLink, chipFor, initLinkPeek } from "./noteLinks.js";
+import { splitLinkText } from "../utils/zettel.js";
 import { guessCodeLang } from "../utils/codeBlock.js";
 import { normalizeCodeLang } from "../utils/highlight.js";
 
@@ -25,7 +28,9 @@ let onChange = () => {};
 let onSelectionState = () => {};
 let loadSeq = 0; // bumps on every loadEditor (async pastes check it before inserting)
 let lastTyped = "";
-let menus = { onKeydown: () => false, onInput: () => {}, close: () => {} }; // noteMenus.js
+let plainPaste = false; // Ctrl+Shift+V: pastes the text as is (no Markdown conversion)
+let menus = { onKeydown: () => false, onInput: () => {}, close: () => {}, openLink: () => {} }; // noteMenus.js
+let peek = null; // link preview on hover (noteLinks.js)
 
 function exec(cmd, value = null) {
   document.execCommand(cmd, false, value);
@@ -60,6 +65,7 @@ function placeCaret(el, atEnd = false) {
 /** kind/wordStart group typing into undo steps (see noteHistory.js). */
 function changed(kind = "cmd", wordStart = false) {
   hydrateCodeBlocks(editor); // <pre data-lang> colado ou inserido
+  hydrateLinks(editor); // links [[ ]] colados ou inseridos
   fixBlockNesting();
   const html = editorHtml();
   recordHistory(html, kind, wordStart);
@@ -78,6 +84,7 @@ function editorHtml() {
 function setEditorHtml(html) {
   editor.innerHTML = html;
   hydrateCodeBlocks(editor);
+  return hydrateLinks(editor, true);
 }
 
 // ---------- Undo / redo ----------
@@ -601,6 +608,49 @@ function handleCopy(e) {
   }
 }
 
+// ---------- Click on empty space ----------
+
+const TEXT_BLOCKS = new Set(["P", "H1", "H2", "H3", "BLOCKQUOTE", "UL", "OL"]);
+
+/**
+ * Clicks that land on empty space instead of on text:
+ *  - between the title and the next block (where the properties panel opens a gap): caret at
+ *    the start of that block;
+ *  - below the last block: caret at its end, or on a new line when that block is the title or
+ *    not text (code, table, image) — like pressing Enter after the title.
+ */
+function handleClickBelow(e) {
+  if (e.button !== 0 || e.detail > 1 || editor.contentEditable !== "true") return;
+  if (e.target !== editor && e.target !== scroller) return;
+  const blocks = [...editor.children].filter((b) => !b.hidden);
+  const first = blocks[0];
+  if (!first) return;
+  const y = e.clientY;
+  if (y <= first.getBoundingClientRect().bottom) return; // title line: native behavior
+  const last = blocks[blocks.length - 1];
+
+  if (y <= last.getBoundingClientRect().bottom) {
+    const second = blocks[1];
+    if (!second || y >= second.getBoundingClientRect().top || !TEXT_BLOCKS.has(second.tagName)) return;
+    e.preventDefault();
+    editor.focus({ preventScroll: true });
+    placeCaret(second.matches("ul,ol") ? second.querySelector("li") || second : second);
+    return;
+  }
+
+  e.preventDefault();
+  editor.focus({ preventScroll: true });
+  if (last !== first && TEXT_BLOCKS.has(last.tagName) && !last.querySelector("img,table")) {
+    placeCaret(last.matches("ul,ol") ? last.querySelector(":scope > li:last-child") || last : last, true);
+    return;
+  }
+  sealHistory();
+  const p = newParagraph();
+  last.after(p);
+  placeCaret(p);
+  changed();
+}
+
 // ---------- Checklist ----------
 
 function handleChecklistClick(e) {
@@ -661,30 +711,82 @@ const ZWSP = "​";
  * After typing a closing marker, turns the Markdown run before the caret into the element.
  * The caret goes after a zero-width space: otherwise Chrome keeps typing inside the element.
  * The ZWSP is dropped on the next keystroke and never saved (editorHtml).
+ * Dead keys (` and ~ on ABNT2) insert the marker together with the next character ("`,"):
+ * then the marker is the first character and the rest stays after the element.
  */
 function tryInlineMarkdown(data) {
-  if (!data || !"*_~`".includes(data.slice(-1))) return false;
+  if (!data) return false;
+  let tail = 0;
+  if (!"*_~`".includes(data.slice(-1))) {
+    if (data.length !== 2 || !"~`".includes(data[0])) return false;
+    tail = 1;
+  }
   const sel = window.getSelection();
   const node = sel.anchorNode;
   if (!sel.isCollapsed || node?.nodeType !== Node.TEXT_NODE || !selectionRange()) return false;
   if (node.parentElement.closest("pre,code")) return false;
-  const before = node.data.slice(0, sel.anchorOffset);
+  const end = sel.anchorOffset - tail;
+  if (end < 1) return false;
+  const before = node.data.slice(0, end);
   for (const [re, tag] of INLINE_MARKDOWN) {
     const m = re.exec(before);
     if (!m) continue;
     const range = document.createRange();
     range.setStart(node, m.index + m[1].length);
-    range.setEnd(node, sel.anchorOffset);
+    range.setEnd(node, end);
     range.deleteContents();
     const el = document.createElement(tag);
     el.textContent = m[2];
-    const gap = document.createTextNode(ZWSP);
-    range.insertNode(gap);
-    range.insertNode(el);
-    sel.collapse(gap, 1);
+    if (tail) {
+      range.insertNode(el); // splits the text node: the typed tail starts the next one
+      sel.collapse(el.nextSibling, tail);
+    } else {
+      const gap = document.createTextNode(ZWSP);
+      range.insertNode(gap);
+      range.insertNode(el);
+      sel.collapse(gap, 1);
+    }
     return true;
   }
   return false;
+}
+
+/** "[[Título]]" or "[[Título|texto]]" typed by hand: the closing "]]" turns it into a note link. */
+function tryWikiLink(data) {
+  if (data !== "]") return false;
+  const sel = window.getSelection();
+  const node = sel.anchorNode;
+  if (!sel.isCollapsed || node?.nodeType !== Node.TEXT_NODE || !selectionRange()) return false;
+  if (node.parentElement.closest("pre,code")) return false;
+  const end = sel.anchorOffset;
+  const m = /\[\[([^[\]\n]+)\]\]$/.exec(node.data.slice(0, end));
+  if (!m) return false;
+  const { title, alias } = splitLinkText(m[1]);
+  if (!title) return false;
+  const range = document.createRange();
+  range.setStart(node, m.index);
+  range.setEnd(node, end);
+  range.deleteContents();
+  const tpl = document.createElement("template");
+  tpl.innerHTML = chipFor(title, alias);
+  const gap = document.createTextNode(ZWSP);
+  range.insertNode(gap);
+  range.insertNode(tpl.content.firstChild);
+  sel.collapse(gap, 1);
+  return true;
+}
+
+/** "Link para nota": the selected text becomes a link; otherwise "[[" opens the note picker. */
+function insertNoteLink() {
+  const range = selectionRange();
+  const text = range?.toString().trim() || "";
+  if (text && !text.includes("\n") && text.length <= 120) {
+    exec("insertHTML", chipFor(text.replace(/[[\]|]/g, "")) + ZWSP);
+    changed();
+    return;
+  }
+  exec("insertText", "[[");
+  menus.openLink();
 }
 
 /** Drops the caret's ZWSP once real text was typed next to it. */
@@ -756,6 +858,7 @@ function handleKeydown(e) {
   if (editor.contentEditable !== "true" || codeBlockOf(e.target)) return;
   if (menus.onKeydown(e)) return; // "/" menu navigation, Esc on the selection toolbar
   const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === "v") plainPaste = e.shiftKey;
 
   const lower = e.key.toLowerCase();
   if (mod && !e.altKey && (lower === "z" || lower === "y")) {
@@ -889,14 +992,67 @@ function insertLater(range, seq, makeHtml) {
     .catch((err) => console.error("paste failed", err));
 }
 
+/** HTML without any formatting (e.g. VS Code: colored divs/spans): its plain text is what counts. */
+function isUnformattedHtml(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  return !tpl.content.querySelector("h1,h2,h3,h4,h5,h6,ul,ol,table,b,strong,i,em,u,s,del,code,pre,blockquote,img,a");
+}
+
+/** Converted Markdown as blocks; into an empty note it becomes the whole note (first line = title). */
+function insertMarkdownBlocks(html) {
+  if (!html) return;
+  if (!editor.textContent.trim() && !editor.querySelector("img,table")) {
+    editor.replaceChildren();
+    placeCaret(editor);
+  }
+  insertBlocks(html);
+}
+
+/** Pasted Markdown text: one line stays inline (`code`, **bold**), more lines become blocks. */
+function pasteMarkdown(text, kind, range) {
+  const html = kind === "inline" ? inlineMarkdown(text) : markdownToHtml(text);
+  if (!html.includes("<img")) {
+    if (kind === "inline") exec("insertHTML", sanitizeHtml(html));
+    else insertMarkdownBlocks(sanitizeHtml(html));
+    return;
+  }
+  // Images: data: URLs and absolute paths become stored files; relative paths keep the alt text.
+  const seq = loadSeq;
+  resolveMarkdownImages(kind === "inline" ? `<p>${html}</p>` : html, "")
+    .then((resolved) => {
+      if (seq !== loadSeq || !range || !editor.contains(range.startContainer)) return;
+      editor.focus({ preventScroll: true });
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      insertMarkdownBlocks(sanitizeHtml(resolved));
+      normalizeTopLevel();
+      changed();
+    })
+    .catch((err) => console.error("markdown paste failed", err));
+}
+
 function handlePaste(e) {
+  const plain = plainPaste;
+  plainPaste = false;
   if (codeBlockOf(e.target)) return; // the code editor's textarea pastes plain text natively
   e.preventDefault();
   if (editor.contentEditable !== "true") return;
-  const html = e.clipboardData.getData("text/html");
+  const html = plain ? "" : e.clipboardData.getData("text/html");
   const text = e.clipboardData.getData("text/plain");
   const images = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
   const range = selectionRange()?.cloneRange();
+
+  // Markdown copied as text (editor, terminal, .md file): converted to formatting.
+  const md = !plain && text && !closestInEditor("pre,td,th") && (!html || isUnformattedHtml(html)) && markdownKind(text);
+  if (md) {
+    sealHistory();
+    pasteMarkdown(text, md, range);
+    normalizeTopLevel();
+    changed();
+    return;
+  }
 
   // Screenshots / "Copy image": the file wins unless the HTML also carries text.
   if (images.length && range && !htmlHasText(html)) {
@@ -994,6 +1150,9 @@ export function runCommand(cmd) {
     case "inline-code":
       toggleInlineCode();
       return;
+    case "link":
+      insertNoteLink();
+      return;
     case "clear":
       exec("removeFormat");
       editor.querySelectorAll("code").forEach((c) => window.getSelection().containsNode(c, true) && c.replaceWith(...c.childNodes));
@@ -1017,20 +1176,26 @@ export function runCommand(cmd) {
   changed();
 }
 
-/** key identifies the note so its undo history survives switching notes. */
+/**
+ * key identifies the note so its undo history survives switching notes.
+ * Returns the HTML when opening it updated note links (renamed/new targets), else null.
+ */
 export function loadEditor(html, { readOnly = false, focus = false, key = null } = {}) {
   loadSeq++;
   lastTyped = "";
   menus.close();
+  peek?.hide();
   editor.contentEditable = readOnly ? "false" : "true";
-  setEditorHtml(html || "<h1><br></h1>");
-  openHistory(readOnly ? null : key, editorHtml());
+  const linksChanged = setEditorHtml(html || "<h1><br></h1>");
+  const current = editorHtml();
+  openHistory(readOnly ? null : key, current);
   tableTools.hidden = true;
   scroller.scrollTop = 0;
   if (focus && !readOnly) {
     editor.focus();
     placeCaret(editor.lastElementChild || editor, true);
   }
+  return linksChanged && !readOnly ? current : null;
 }
 
 export function focusEditorEnd() {
@@ -1059,6 +1224,23 @@ export function initEditor({ onInput, onSelection }) {
     getSelectionState,
     selectionRange,
     editable: () => editor.contentEditable === "true",
+    inserted: () => {
+      sealHistory();
+      changed();
+    },
+  });
+  peek = initLinkPeek(editor, scroller);
+  scroller.addEventListener("mousedown", handleClickBelow);
+
+  // Note links are atomic chips: a click opens the note (also in read-only notes).
+  editor.addEventListener("mousedown", (e) => {
+    if (e.button === 0 && e.target.closest?.("a.nt-link")) e.preventDefault();
+  });
+  editor.addEventListener("click", (e) => {
+    const a = e.target.closest?.("a.nt-link");
+    if (!a || !editor.contains(a)) return;
+    e.preventDefault();
+    followLink(a, () => editor.contentEditable === "true" && changed());
   });
 
   editor.addEventListener("input", (e) => {
@@ -1071,7 +1253,8 @@ export function initEditor({ onInput, onSelection }) {
       lastTyped = e.data || "";
       changed("type", wordStart);
       // **bold** etc.: the raw text stays one undo step behind the formatted one.
-      if (!codeBlockOf(e.target) && tryInlineMarkdown(e.data)) {
+      // While composing (dead keys on Linux) the DOM must not change: see compositionend.
+      if (!e.isComposing && !codeBlockOf(e.target) && (tryInlineMarkdown(e.data) || tryWikiLink(e.data))) {
         sealHistory();
         changed();
       }
@@ -1080,6 +1263,13 @@ export function initEditor({ onInput, onSelection }) {
     }
     lastTyped = "";
     changed(/^delete(Content|Word|SoftLine|HardLine)/.test(type) ? "delete" : "cmd");
+  });
+  editor.addEventListener("compositionend", (e) => {
+    if (editor.contentEditable !== "true" || codeBlockOf(e.target)) return;
+    if (tryInlineMarkdown(e.data)) {
+      sealHistory();
+      changed();
+    }
   });
   // Undo/Redo from the context menu.
   editor.addEventListener("beforeinput", (e) => {

@@ -50,7 +50,7 @@ body.desktop-mode #view-http {
 
 .app-switch {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   margin-right: auto;
   padding: 2px;
   border-radius: 8px;
@@ -58,7 +58,7 @@ body.desktop-mode #view-http {
 }
 
 .app-switch button {
-  width: 30px;
+  width: 27px;
   height: 24px;
   border: none;
   border-radius: 6px;
@@ -214,6 +214,13 @@ body.desktop-mode #view-http {
   cursor: pointer;
   user-select: none;
   border-radius: 6px;
+}
+
+/* Subfolders: header, requests and "empty" note indented by depth. */
+.hx-folder-head,
+.hx-folder-body,
+.hx-folder-empty {
+  margin-left: calc(var(--depth, 0) * 14px);
 }
 
 .hx-folder-head i {

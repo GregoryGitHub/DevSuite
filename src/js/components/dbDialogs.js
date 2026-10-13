@@ -8,6 +8,7 @@ import { dbApi } from "../api.js";
 
 const modal = createModalHost(document.getElementById("db-modal"));
 
+export const dbModal = modal;
 export const isDbModalOpen = modal.isOpen;
 export const closeDbModal = modal.close;
 export const dbConfirm = modal.confirm;

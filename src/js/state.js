@@ -2,7 +2,7 @@ export const state = {
   todos: [],
   notes: [],
   folders: [], // pastas criadas pelo usuário; a pasta padrão "Notas" (id 0) é implícita
-  settings: { autostart: false, start_minimized: false, theme: "system" },
+  settings: { autostart: false, start_minimized: false, theme: "system", zettelkasten: false },
   currentView: "my_day", // lista de tarefas: "my_day" | "pending" | "all"
   tasksUI: {
     selectedId: null,
@@ -14,10 +14,10 @@ export const state = {
   activeMainView: "tasks", // "tasks" | "notes" | "http" | "json" | "db" | "settings"
   desktopMode: false, // true = janela grande (Notas, HTTP e JSON)
   notesUI: {
-    scope: "all", // "all" | "trash" | "f:<folderId>"
+    scope: "all", // "all" | "trash" | "graph" (modo Zettelkasten) | "f:<folderId>"
     selectedId: null,
     query: "",
-    pane: "list", // modo bandeja: "folders" | "list" | "editor"
+    pane: "list", // modo bandeja: "folders" | "list" | "editor" | "graph"
     sidebarHidden: false,
     editingFolderId: null,
   },

@@ -234,6 +234,86 @@ async fn it_end_to_end() {
     s.close().await;
 }
 
+/// Estrutura editável (db_table_schema) e o DDL gerado por `sqlDdl.js` (mesmos comandos que
+/// `tests/db-utils.test.mjs` espera), executado como o diálogo faz: numa transação.
+#[tokio::test]
+async fn it_table_schema() {
+    let Some(mut master) = session("master").await else {
+        eprintln!("TODORS_MSSQL_TEST não definido; teste ignorado");
+        return;
+    };
+    exec(&mut master, SETUP).await;
+    master.close().await;
+    let mut s = session("TodoRsIt").await.unwrap();
+    exec(
+        &mut s,
+        "IF OBJECT_ID('dbo.itens') IS NOT NULL DROP TABLE dbo.itens;
+         IF OBJECT_ID('dbo.pedido') IS NOT NULL DROP TABLE dbo.pedido;
+         IF OBJECT_ID('dbo.pedidos') IS NOT NULL DROP TABLE dbo.pedidos;
+         CREATE TABLE dbo.pedidos (
+             id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pedidos PRIMARY KEY CLUSTERED,
+             cliente nvarchar(100) NULL,
+             qtd int NOT NULL CONSTRAINT DF_pedidos_qtd DEFAULT 1,
+             obs nvarchar(max) NULL,
+             CONSTRAINT CK_qtd CHECK (qtd > 0));
+         CREATE INDEX IX_pedidos_cliente ON dbo.pedidos(cliente) INCLUDE (qtd);
+         INSERT INTO dbo.pedidos (cliente, obs) VALUES (N'Ana', N'x');",
+    )
+    .await;
+
+    let t = s.table_schema("dbo", "pedidos").await.unwrap();
+    let qtd = &t.columns[2];
+    assert!(t.columns[0].identity && !t.columns[0].nullable);
+    assert_eq!((qtd.default.as_str(), qtd.default_name.as_str()), ("((1))", "DF_pedidos_qtd"));
+    assert_eq!(t.columns[3].full_type, "nvarchar(max)");
+    assert_eq!((t.indexes[0].name.as_str(), t.indexes[0].kind.as_str(), t.indexes[0].clustered), ("PK_pedidos", "pk", true));
+    let ix = &t.indexes[1];
+    assert_eq!((ix.kind.as_str(), ix.columns[0].name.as_str(), ix.include.clone()), ("index", "cliente", vec!["qtd".to_string()]));
+    assert_eq!(t.checks[0].definition, "([qtd]>(0))");
+    assert!(s.table_schema("dbo", "nao_existe").await.is_err());
+
+    // Nova tabela com FK (sqlDdl.newTableModel + FK).
+    s.apply(&["SET LOCK_TIMEOUT 15000;\nCREATE TABLE [dbo].[itens]\n(\n    [Id] int IDENTITY(1, 1) NOT NULL,\n    [pedido_id] int NOT NULL,\n    CONSTRAINT [PK_itens] PRIMARY KEY CLUSTERED ([Id]),\n    CONSTRAINT [FK_itens_pedidos] FOREIGN KEY ([pedido_id]) REFERENCES [dbo].[pedidos] ([id]) ON DELETE CASCADE\n)".into()], true)
+        .await
+        .unwrap();
+
+    // Renomeia coluna, troca tipo (índice, default e check dependentes saem e voltam), exclui
+    // coluna, adiciona coluna NOT NULL com default e renomeia a tabela.
+    let script = [
+        "SET LOCK_TIMEOUT 15000;\nALTER TABLE [dbo].[pedidos] DROP CONSTRAINT [CK_qtd]",
+        "DROP INDEX [IX_pedidos_cliente] ON [dbo].[pedidos]",
+        "ALTER TABLE [dbo].[pedidos] DROP CONSTRAINT [DF_pedidos_qtd]",
+        "ALTER TABLE [dbo].[pedidos] DROP COLUMN [obs]",
+        "EXEC sp_rename N'[dbo].[pedidos].[cliente]', N'cliente_nome', 'COLUMN'",
+        "ALTER TABLE [dbo].[pedidos] ALTER COLUMN [qtd] bigint NOT NULL",
+        "ALTER TABLE [dbo].[pedidos] ADD CONSTRAINT [DF_pedidos_qtd] DEFAULT (1) FOR [qtd]",
+        "ALTER TABLE [dbo].[pedidos] ADD [criado] datetime2(7) NOT NULL CONSTRAINT [DF_pedido_criado] DEFAULT (sysutcdatetime())",
+        "CREATE NONCLUSTERED INDEX [IX_pedidos_cliente] ON [dbo].[pedidos] ([cliente_nome]) INCLUDE ([qtd])",
+        "ALTER TABLE [dbo].[pedidos] ADD CONSTRAINT [CK_qtd] CHECK ([qtd]>(0))",
+        "EXEC sp_rename N'[dbo].[pedidos]', N'pedido'",
+    ];
+    s.apply(&script.map(String::from), true).await.unwrap();
+    let t = s.table_schema("dbo", "pedido").await.unwrap();
+    let names: Vec<_> = t.columns.iter().map(|c| format!("{} {}", c.name, c.full_type)).collect();
+    assert_eq!(names, ["id int", "cliente_nome nvarchar(100)", "qtd bigint", "criado datetime2(7)"]);
+    assert_eq!(t.columns[2].default_name, "DF_pedidos_qtd");
+    assert_eq!(t.indexes[1].columns[0].name, "cliente_nome");
+    assert_eq!(t.checks.len(), 1);
+    let itens = s.table_schema("dbo", "itens").await.unwrap();
+    assert_eq!((itens.fks[0].ref_table.as_str(), itens.fks[0].on_delete.as_str()), ("pedido", "CASCADE"));
+
+    // Tirar a PK referenciada por FK falha e nada muda (tudo ou nada).
+    let err = s
+        .apply(&["SET LOCK_TIMEOUT 15000;\nEXEC sp_rename N'[dbo].[pedido].[IX_pedidos_cliente]', N'IX_cli', 'INDEX'".into(), "ALTER TABLE [dbo].[pedido] DROP CONSTRAINT [PK_pedidos]".into()], true)
+        .await
+        .unwrap_err();
+    assert!(err.starts_with("Comando 2 de 2"), "{err}");
+    let t = s.table_schema("dbo", "pedido").await.unwrap();
+    assert_eq!(t.indexes[1].name, "IX_pedidos_cliente", "rename desfeito");
+
+    exec(&mut s, "DROP TABLE dbo.itens; TRUNCATE TABLE dbo.pedido; DROP TABLE dbo.pedido;").await;
+    s.close().await;
+}
 
 // ---------- MongoDB ----------
 // docker run -d -p 27019:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=TodoRs#Mongo2026 mongo:7

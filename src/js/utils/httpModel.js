@@ -1,6 +1,8 @@
 // Data model of the HTTP tab (Postman-like): defaults, migration, variables,
 // URL <-> params sync and building the final request sent to Rust.
 
+import { normalizeFolderTree } from "./folderTree.js";
+
 export const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 export const BODY_MODES = [
   { id: "none", label: "nenhum" },
@@ -124,11 +126,15 @@ export function normalizeCollection(c) {
     auth: normAuth(c.auth, "none"),
     variables: normKvList(c.variables),
     scripts: { pre: String(c.scripts?.pre ?? ""), test: String(c.scripts?.test ?? "") },
-    folders: (Array.isArray(c.folders) ? c.folders : []).map((f) => ({
-      id: Number(f.id) || uid(),
-      name: String(f.name || "Pasta"),
-      collapsed: !!f.collapsed,
-    })),
+    // Subpastas: parent_id = pasta-mãe (0 = raiz da coleção).
+    folders: normalizeFolderTree(
+      (Array.isArray(c.folders) ? c.folders : []).map((f) => ({
+        id: Number(f.id) || uid(),
+        name: String(f.name || "Pasta"),
+        parent_id: Number(f.parent_id) || 0,
+        collapsed: !!f.collapsed,
+      })),
+    ),
   };
 }
 
