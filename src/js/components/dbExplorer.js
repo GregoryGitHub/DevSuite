@@ -325,7 +325,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const status = n.loading ? '<i class="fa-solid fa-spinner fa-spin dbx-spin"></i>' : n.error ? `<i class="fa-solid fa-triangle-exclamation dbx-err" title="${escapeHtml(n.error)}"></i>` : "";
     const color = n.kind === "conn" && conn?.color ? ` style="--conn:${conn.color}"` : "";
     return (
-      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}${n.kind === "conn" && conn?.color ? " colored" : ""}" data-key="${escapeHtml(n.key)}" style="padding-left:${6 + depth * 14}px"${color}>` +
+      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}${n.kind === "conn" && conn?.color ? " colored" : ""}" data-key="${escapeHtml(n.key)}"${n.kind === "conn" && !query ? ' draggable="true"' : ""} style="padding-left:${6 + depth * 14}px"${color}>` +
       `<span class="dbx-caret">${exp ? `<i class="fa-solid fa-chevron-${open ? "down" : "right"}"></i>` : ""}</span>` +
       `<i class="${ic} dbx-icon"></i><span class="dbx-label">${escapeHtml(n.label)}</span>${extra}${meta}${status}</div>` +
       (n.error && n.kind === "conn" ? `<div class="dbx-error" style="padding-left:${26 + depth * 14}px">${escapeHtml(n.error)}</div>` : "")
@@ -364,6 +364,19 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
 
   // ---------- Ações ----------
 
+  const connIndex = (id) => ctx.data().connections.findIndex((c) => c.id === id);
+
+  /** Reordena as conexões: `id` passa a ocupar a posição `to` (a ordem do array é a da árvore). */
+  function moveConn(id, to) {
+    const list = ctx.data().connections;
+    const from = connIndex(id);
+    if (from < 0 || to < 0 || to >= list.length || from === to) return;
+    list.splice(to, 0, ...list.splice(from, 1));
+    ctx.saveUi();
+    ctx.onConnectionsReordered?.();
+    render();
+  }
+
   function objectRef(n) {
     return { conn: ctx.conn(n.connId), database: n.database, schema: n.schema, name: n.name, kind: n.kind };
   }
@@ -397,11 +410,23 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
         { label: isMongo(conn) ? "Copiar connection string" : "Copiar servidor", icon: "fa-regular fa-clipboard", run: () => ctx.copy(isMongo(conn) ? conn.uri : conn.host) },
         conn.auth.kind === "entra" ? { label: "Sair da conta Microsoft", icon: "fa-solid fa-right-from-bracket", run: () => ctx.signOut(conn) } : null,
         "sep",
+        { label: "Mover para cima", icon: "fa-solid fa-arrow-up", disabled: connIndex(conn.id) === 0, run: () => moveConn(conn.id, connIndex(conn.id) - 1) },
+        { label: "Mover para baixo", icon: "fa-solid fa-arrow-down", disabled: connIndex(conn.id) === ctx.data().connections.length - 1, run: () => moveConn(conn.id, connIndex(conn.id) + 1) },
+        "sep",
         { label: "Excluir conexão", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.deleteConnection(conn) },
       );
     } else if (n.kind === "database" || n.kind === "schema") {
       items.push(consoleItem(n.database));
-      if (!isMongo(conn)) items.push({ label: "Nova tabela…", icon: "fa-solid fa-square-plus", run: () => ctx.schema.newTable({ conn, database: n.database, schema: n.schema || "dbo" }) });
+      if (!isMongo(conn)) {
+        items.push(
+          { label: "Nova tabela…", icon: "fa-solid fa-square-plus", run: () => ctx.schema.newTable({ conn, database: n.database, schema: n.schema || "dbo" }) },
+          {
+            label: n.kind === "schema" ? "Gerar DDL do schema…" : "Gerar DDL do banco…",
+            icon: "fa-solid fa-scroll",
+            run: () => ctx.schema.databaseScript({ conn, database: n.database, schema: n.kind === "schema" ? n.schema : "" }),
+          },
+        );
+      }
       items.push({ label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) }, { label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) });
     } else if (n.kind === "collection" || n.kind === "mview") {
       const ref = { ...objectRef(n), kind: n.kind === "mview" ? "view" : "collection" };
@@ -491,6 +516,11 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
 
   // ---------- Eventos ----------
 
+  // destroy() solta tudo (setDbData recria o Explorer ao recarregar databases.json).
+  const listeners = new AbortController();
+  const on = { signal: listeners.signal };
+
+
   treeEl.addEventListener("mousedown", (e) => {
     const row = e.target.closest(".dbx-row");
     if (!row) return;
@@ -500,19 +530,19 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     treeEl.querySelectorAll(".dbx-row.sel").forEach((r) => r.classList.remove("sel"));
     row.classList.add("sel");
     treeEl.focus({ preventScroll: true });
-  });
+  }, on);
   treeEl.addEventListener("dblclick", (e) => {
     const row = e.target.closest(".dbx-row");
     if (!row || e.target.closest(".dbx-caret")) return;
     activate(nodes.get(row.dataset.key));
-  });
+  }, on);
   treeEl.addEventListener("contextmenu", (e) => {
     const row = e.target.closest(".dbx-row");
     if (!row) return;
     e.preventDefault();
     select(row.dataset.key, { reveal: false });
     menuFor(nodes.get(row.dataset.key), e.clientX, e.clientY);
-  });
+  }, on);
   treeEl.addEventListener("keydown", (e) => {
     const i = flat.findIndex((r) => r.n.key === selected);
     const cur = flat[i]?.n;
@@ -545,13 +575,56 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
       const r = treeEl.querySelector(".dbx-row.sel")?.getBoundingClientRect();
       if (r) menuFor(cur, r.left + 40, r.bottom);
     }
-  });
+  }, on);
+  // Arrastar uma conexão sobre outra: entra antes (metade de cima) ou depois (de baixo).
+  let draggedConn = null;
+  const clearDrop = () => treeEl.querySelectorAll(".drop-before, .drop-after").forEach((r) => r.classList.remove("drop-before", "drop-after"));
+  const connRowAt = (e) => {
+    const row = e.target.closest(".dbx-row.k-conn");
+    const n = row && nodes.get(row.dataset.key);
+    if (!n || n.connId === draggedConn) return null;
+    const r = row.getBoundingClientRect();
+    return { row, n, after: e.clientY > r.top + r.height / 2 };
+  };
+  treeEl.addEventListener("dragstart", (e) => {
+    const row = e.target.closest(".dbx-row.k-conn");
+    const n = row && nodes.get(row.dataset.key);
+    if (!n) return;
+    draggedConn = n.connId;
+    e.dataTransfer.setData("application/x-db-conn", n.connId);
+    e.dataTransfer.effectAllowed = "move";
+  }, on);
+  treeEl.addEventListener("dragend", () => {
+    draggedConn = null;
+    clearDrop();
+  }, on);
+  treeEl.addEventListener("dragover", (e) => {
+    if (!draggedConn) return;
+    const hit = connRowAt(e);
+    clearDrop();
+    if (!hit) return;
+    e.preventDefault();
+    hit.row.classList.add(hit.after ? "drop-after" : "drop-before");
+  }, on);
+  treeEl.addEventListener("drop", (e) => {
+    const hit = draggedConn && connRowAt(e);
+    clearDrop();
+    if (!hit) return;
+    e.preventDefault();
+    const from = connIndex(draggedConn);
+    let to = connIndex(hit.n.connId) + (hit.after ? 1 : 0);
+    if (from < to) to--;
+    moveConn(draggedConn, to);
+    draggedConn = null;
+  }, on);
+
   searchEl?.addEventListener("input", () => {
     query = searchEl.value.trim();
     render();
-  });
+  }, on);
 
   return {
+    destroy: () => listeners.abort(),
     render: schedule,
     refresh,
     refreshConnection: (connId) => refresh(`c:${connId}`),

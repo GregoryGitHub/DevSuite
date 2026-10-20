@@ -27,7 +27,7 @@ impl MgmtClients {
             .danger_accept_invalid_certs(insecure)
             .timeout(Duration::from_secs(timeout_s.max(1)))
             .connect_timeout(Duration::from_secs(timeout_s.clamp(1, 15)))
-            .user_agent(concat!("TodoRS/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("DevSuite/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| e.to_string())?;
         map.insert((insecure, timeout_s), client.clone());

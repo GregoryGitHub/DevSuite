@@ -315,6 +315,142 @@ async fn it_table_schema() {
     s.close().await;
 }
 
+const SCRIPT_SOURCE: &[&str] = &[
+    "CREATE SCHEMA vendas",
+    "CREATE TYPE dbo.Nome FROM nvarchar(80) NOT NULL;
+     CREATE TYPE dbo.ListaIds AS TABLE (id int NOT NULL PRIMARY KEY, peso int NULL DEFAULT 1, CHECK (peso > 0));
+     CREATE SEQUENCE dbo.seq_pedido AS int START WITH 100 INCREMENT BY 5;",
+    "CREATE FUNCTION dbo.fn_dobro(@x int) RETURNS int WITH SCHEMABINDING AS BEGIN RETURN @x * 2 END",
+    // Filha antes da mãe em ordem alfabética: aitens -> pedidos -> clientes.
+    "CREATE TABLE dbo.clientes (
+         id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_clientes PRIMARY KEY,
+         nome dbo.Nome,
+         codigo varchar(10) COLLATE Latin1_General_BIN NULL);
+     CREATE UNIQUE INDEX UX_clientes_nome ON dbo.clientes(nome);
+     CREATE TABLE dbo.pedidos (
+         id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_pedidos PRIMARY KEY,
+         numero int NOT NULL CONSTRAINT DF_pedidos_numero DEFAULT (NEXT VALUE FOR dbo.seq_pedido),
+         cliente_id int NOT NULL CONSTRAINT FK_pedidos_clientes REFERENCES dbo.clientes(id),
+         total money NOT NULL CONSTRAINT DF_pedidos_total DEFAULT 0,
+         total_x2 AS (total * 2) PERSISTED);
+     CREATE INDEX IX_pedidos_cliente ON dbo.pedidos(cliente_id DESC) INCLUDE (total) WHERE total > 0;
+     CREATE TABLE dbo.aitens (
+         id int IDENTITY(1,1) PRIMARY KEY,
+         pedido_id int NOT NULL CONSTRAINT FK_aitens_pedidos REFERENCES dbo.pedidos(id) ON DELETE CASCADE,
+         qtd int NOT NULL CONSTRAINT DF_aitens_qtd DEFAULT 1,
+         dobro AS dbo.fn_dobro(qtd),
+         CONSTRAINT CK_aitens_qtd CHECK (qtd > 0));
+     CREATE TABLE vendas.depto (id int PRIMARY KEY, gerente_id int NULL);
+     CREATE TABLE vendas.funcionario (id int PRIMARY KEY, depto_id int NULL, chefe_id int NULL CONSTRAINT FK_func_chefe REFERENCES vendas.funcionario(id));
+     ALTER TABLE vendas.depto ADD CONSTRAINT FK_depto_gerente FOREIGN KEY (gerente_id) REFERENCES vendas.funcionario(id);
+     ALTER TABLE vendas.funcionario ADD CONSTRAINT FK_func_depto FOREIGN KEY (depto_id) REFERENCES vendas.depto(id);",
+    "CREATE VIEW dbo.v1 AS SELECT 1 AS x",
+    "CREATE VIEW dbo.v2 AS SELECT id AS x FROM dbo.pedidos",
+    // v1 (criada antes) passa a depender de v2.
+    "ALTER VIEW dbo.v1 AS SELECT x FROM dbo.v2",
+    "CREATE FUNCTION dbo.fn_pedidos(@c int) RETURNS TABLE AS RETURN SELECT id FROM dbo.pedidos WHERE cliente_id = @c",
+    "CREATE PROCEDURE vendas.p_total AS SELECT COUNT(*) FROM dbo.v1",
+    "CREATE TRIGGER dbo.tr_pedidos ON dbo.pedidos AFTER INSERT AS SET NOCOUNT ON",
+    "CREATE SYNONYM dbo.syn_cli FOR dbo.clientes",
+];
+
+/// Objetos, índices e tipos do banco (sem os nomes gerados das tabelas internas dos tipos de tabela).
+const SCRIPT_INVENTORY: &str = "
+SELECT (o.type + ' ' + SCHEMA_NAME(o.schema_id) + '.' + o.name) COLLATE DATABASE_DEFAULT FROM sys.objects o
+WHERE o.is_ms_shipped = 0 AND o.type <> 'TT' AND o.parent_object_id NOT IN (SELECT object_id FROM sys.objects WHERE type = 'TT')
+UNION ALL SELECT ('IX ' + OBJECT_NAME(i.object_id) + '.' + i.name) COLLATE DATABASE_DEFAULT FROM sys.indexes i
+WHERE i.name IS NOT NULL AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 AND OBJECTPROPERTY(i.object_id, 'IsMSShipped') = 0
+UNION ALL SELECT ('TY ' + name) COLLATE DATABASE_DEFAULT FROM sys.types WHERE is_user_defined = 1
+ORDER BY 1";
+
+fn all_script_options(if_not_exists: bool) -> DbScriptOptions {
+    DbScriptOptions {
+        schemas: Vec::new(),
+        types: true,
+        sequences: true,
+        tables: true,
+        indexes: true,
+        foreign_keys: true,
+        views: true,
+        functions: true,
+        procedures: true,
+        triggers: true,
+        synonyms: true,
+        if_not_exists,
+    }
+}
+
+async fn inventory(s: &mut Box<dyn Session>) -> Vec<String> {
+    let (c, _) = exec(s, SCRIPT_INVENTORY).await;
+    c.rows(0).into_iter().map(|r| r[0].as_str().unwrap_or_default().to_string()).collect()
+}
+
+/// Roda o script lote a lote (como o console, que divide por GO).
+async fn run_script(s: &mut Box<dyn Session>, sql: &str) {
+    let mut batch = String::new();
+    for line in sql.lines().chain(std::iter::once("GO")) {
+        if line.trim().eq_ignore_ascii_case("GO") {
+            if !batch.trim().is_empty() {
+                exec(s, &batch).await;
+            }
+            batch.clear();
+        } else {
+            batch.push_str(line);
+            batch.push('\n');
+        }
+    }
+}
+
+#[tokio::test]
+async fn it_database_script() {
+    let Some(mut master) = session("master").await else {
+        eprintln!("TODORS_MSSQL_TEST não definido; teste ignorado");
+        return;
+    };
+    for db in ["TodoRsDdlSrc", "TodoRsDdlDst"] {
+        exec(&mut master, &format!("IF DB_ID('{db}') IS NOT NULL BEGIN ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE {db}; END; CREATE DATABASE {db};")).await;
+    }
+    master.close().await;
+
+    let mut src = session("TodoRsDdlSrc").await.unwrap();
+    for sql in SCRIPT_SOURCE {
+        exec(&mut src, sql).await;
+    }
+    let script = src.database_script(&all_script_options(false)).await.unwrap();
+    let sql = &script.sql;
+    let at = |needle: &str| sql.find(needle).unwrap_or_else(|| panic!("{needle} ausente:\n{sql}"));
+    // Pais antes das filhas, função antes da tabela que a usa, v2 antes de v1, triggers no fim.
+    assert!(at("CREATE TABLE [dbo].[clientes]") < at("CREATE TABLE [dbo].[pedidos]"));
+    assert!(at("CREATE TABLE [dbo].[pedidos]") < at("CREATE TABLE [dbo].[aitens]"));
+    assert!(at("dbo.fn_dobro") < at("CREATE TABLE [dbo].[aitens]"));
+    assert!(at("CREATE VIEW dbo.v2") < at("CREATE VIEW dbo.v1"));
+    assert!(at("CREATE TABLE [vendas].[funcionario]") < at("CREATE VIEW dbo.v2"), "ciclo de FKs fica com as tabelas");
+    assert!(at("CREATE TRIGGER") > at("CREATE PROCEDURE vendas.p_total"));
+    assert!(sql.contains("CONSTRAINT [DF_pedidos_numero] DEFAULT (NEXT VALUE FOR [dbo].[seq_pedido])"), "{sql}");
+    assert!(sql.contains("[nome] [dbo].[Nome] NOT NULL"), "{sql}");
+    assert!(sql.contains("COLLATE Latin1_General_BIN"), "{sql}");
+    assert!(sql.contains("-- FK circular de [vendas]"), "{sql}");
+    assert!(script.warnings.is_empty(), "{:?}", script.warnings);
+
+    let mut dst = session("TodoRsDdlDst").await.unwrap();
+    run_script(&mut dst, sql).await;
+    assert_eq!(inventory(&mut dst).await, inventory(&mut src).await);
+
+    // Com guardas, roda de novo sobre o banco já criado sem erro e sem mudar nada.
+    let guarded = src.database_script(&all_script_options(true)).await.unwrap();
+    assert!(guarded.sql.contains("IF OBJECT_ID(N'[dbo].[v2]') IS NULL EXEC(N'CREATE VIEW dbo.v2"), "{}", guarded.sql);
+    run_script(&mut dst, &guarded.sql).await;
+    assert_eq!(inventory(&mut dst).await, inventory(&mut src).await);
+
+    // Só um schema: nada dos outros, mas o schema é criado.
+    let only = src.database_script(&DbScriptOptions { schemas: vec!["vendas".into()], ..all_script_options(false) }).await.unwrap();
+    assert!(!only.sql.contains("[dbo].[pedidos]") && only.sql.contains("CREATE TABLE [vendas].[depto]"), "{}", only.sql);
+    assert!(only.sql.contains("CREATE SCHEMA [vendas]"));
+
+    src.close().await;
+    dst.close().await;
+}
+
 // ---------- MongoDB ----------
 // docker run -d -p 27019:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=TodoRs#Mongo2026 mongo:7
 // TODORS_MONGO_TEST="mongodb://admin@localhost:27019/?authSource=admin|TodoRs#Mongo2026" cargo test it_mongo

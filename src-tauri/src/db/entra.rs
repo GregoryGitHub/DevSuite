@@ -194,8 +194,8 @@ async fn wait_for_code(listener: &TcpListener, state: &str) -> DbResult<String> 
             params.get("code").cloned().ok_or_else(|| "Resposta de login sem código".to_string())
         };
         let (title, text) = match &result {
-            Ok(_) => ("Login concluído", "Pode fechar esta aba e voltar ao TodoRS."),
-            Err(_) => ("Falha no login", "Volte ao TodoRS para ver o erro."),
+            Ok(_) => ("Login concluído", "Pode fechar esta aba e voltar ao Dev Suite."),
+            Err(_) => ("Falha no login", "Volte ao Dev Suite para ver o erro."),
         };
         let html = format!(
             "<!doctype html><meta charset=utf-8><title>{title}</title>\

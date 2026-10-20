@@ -55,7 +55,7 @@ async fn client_for(cfg: &ConnConfig, password: &str) -> DbResult<Client> {
         .await
         .map_err(|_| "Tempo esgotado resolvendo a connection string (DNS do mongodb+srv)".to_string())?
         .map_err(|e| format!("Connection string inválida: {e}"))?;
-    opts.app_name = Some("TodoRS".into());
+    opts.app_name = Some("Dev Suite".into());
     opts.connect_timeout = Some(timeout);
     opts.server_selection_timeout = Some(timeout);
     if !password.is_empty() {

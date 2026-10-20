@@ -1,21 +1,22 @@
 const { invoke } = window.__TAURI__?.core || { invoke: async () => [] };
 
-export async function loadTodosApi() {
+// ---------- Tarefas (board kanban, kanban.json; formato em js/utils/kanbanModel.js) ----------
+
+/** Documento do board (null = ainda não existe). */
+export const loadKanbanApi = () => invoke("load_kanban_data");
+
+export async function saveKanbanApi(data) {
   try {
-    return (await invoke("load_todos")) || [];
+    await invoke("save_kanban_data", { data });
   } catch (e) {
-    console.error("load_todos failed", e);
-    return [];
+    console.error("save_kanban_data failed", e);
   }
 }
 
-export async function saveTodosApi(todos) {
-  try {
-    await invoke("save_todos", { todos });
-  } catch (e) {
-    console.error("save_todos failed", e);
-  }
-}
+/** todos.json antigo (só para migrar): null = não existe; erro = ilegível. */
+export const loadLegacyTodosApi = () => invoke("load_todos");
+/** Renomeia o todos.json para todos.json.migrated (depois de gravar o kanban.json). */
+export const kanbanMigratedApi = () => invoke("kanban_migrated");
 
 // ---------- Notas e pastas (notes.db, SQLite; ver src-tauri/src/notes_db.rs) ----------
 // Os erros sobem para quem chama (js/noteStore.js), que decide como avisar.
@@ -23,9 +24,9 @@ export async function saveTodosApi(todos) {
 export const notesApi = {
   /** Metadados de todas as notas (sem o HTML); remove da lixeira o que passou de 30 dias. */
   list: () => invoke("notes_list"),
-  /** HTML de uma nota (null se não existe). */
+  /** HTML de uma nota (null se não existe); no cofre, { markdown, rel, mtime }. */
   get: (id) => invoke("notes_get", { id }),
-  /** Grava uma nota completa: { ...meta, content, plain, images }. */
+  /** Grava uma nota completa: { ...meta, content, plain, images, markdown? }. Cofre: { disk_mtime, rel, conflict }. */
   save: (note) => invoke("notes_save", { note }),
   /** Grava várias notas numa transação (importação de pasta). */
   saveMany: (notes) => invoke("notes_save_many", { notes }),
@@ -43,6 +44,12 @@ export const notesApi = {
   import: (notes, folders) => invoke("notes_import", { notes, folders }),
   /** Apaga imagens que nenhuma nota usa (a lista vem do banco). */
   gcImages: () => invoke("notes_gc_images"),
+  /** Troca o armazenamento: mode "sqlite" | "vault" (+ pasta). Erro = continua no anterior. */
+  setStorage: (mode, path) => invoke("notes_set_storage", { mode, path }),
+  /** Cofre: o que mudou no disco { changed: [NoteMeta], removed: [id], folders: [Folder] | null }. */
+  vaultRefresh: () => invoke("notes_vault_refresh"),
+  /** Cofre: arquivos que não são notas (imagens/anexos), relativos ao cofre. */
+  vaultFiles: () => invoke("notes_vault_files"),
 };
 
 export async function loadSettingsApi() {
@@ -175,8 +182,9 @@ export function importNoteImageApi(path) {
   return invoke("import_note_image", { path });
 }
 
-export function exportNoteImagesApi(names, dir) {
-  return invoke("export_note_images", { names, dir });
+/** Copia imagens para `dir`; `local` = das imagens do banco local mesmo com um cofre aberto. */
+export function exportNoteImagesApi(names, dir, local = false) {
+  return invoke("export_note_images", { names, dir, local });
 }
 
 /** Imprime a webview direto num PDF (só o que aparece na mídia print: #note-print). */
@@ -224,6 +232,8 @@ export const dbApi = {
   introspect: (target, path) => invoke("db_introspect", { target, path }),
   tableInfo: (target, schema, name) => invoke("db_table_info", { target, schema, name }),
   ddl: (target, path) => invoke("db_ddl", { target, path }),
+  /** Script do banco inteiro na ordem de criação: { sql, objects, warnings }. */
+  databaseScript: (target, options) => invoke("db_database_script", { target, options }),
   tableSchema: (target, schema, name) => invoke("db_table_schema", { target, schema, name }),
   /** `onEvent` recebe ResultStart/Rows/ResultEnd enquanto a consulta roda; resolve com o resumo. */
   execute(target, queryId, sql, { maxRows = null, onEvent }) {

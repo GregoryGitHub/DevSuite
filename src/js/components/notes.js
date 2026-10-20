@@ -3,6 +3,7 @@ import {
   hasTauri, notesApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
 } from "../api.js";
 import { updateSettingsUI } from "./settings.js";
+import { registerApp } from "../appLifecycle.js";
 import {
   loadNoteStore,
   ensureContent,
@@ -13,7 +14,12 @@ import {
   saveFolders as saveFoldersStore,
   searchNotes,
   collectImageGarbage,
+  whenSaved,
+  isVault,
+  setVaultContext,
+  refreshVault,
 } from "../noteStore.js";
+import { ATTACHMENTS_DIR, addVaultPath, knownVaults, sameVaultPath, vaultName, vaultLabels } from "../utils/vaultNote.js";
 import {
   descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, ensureFolderPath, removeFolderTree,
 } from "../utils/folderTree.js";
@@ -731,6 +737,171 @@ async function exportPdf(id) {
   }
 }
 
+// ---------- Cofre (pasta de Markdown) ----------
+
+let vaultSyncing = null;
+let vaultTimer = null;
+const VAULT_POLL_MS = 30_000;
+
+/**
+ * Traz o que mudou no cofre (outras pessoas na pasta compartilhada, Obsidian, git...).
+ * Nota com edição pendente fica como está (gravar vai cair no fluxo de conflito); as outras
+ * recarregam do disco, inclusive a aberta.
+ */
+function syncVault({ announce = false } = {}) {
+  if (!isVault() || !hasTauri) return Promise.resolve();
+  if (vaultSyncing) return vaultSyncing;
+  flushNotesSave();
+  vaultSyncing = refreshVault()
+    .then((diff) => applyVaultDiff(diff, announce))
+    .catch((e) => {
+      // Rede fora: a verificação periódica não insiste com avisos.
+      if (announce) toast(`Falha ao ler o cofre: ${e}`);
+      else console.warn("vault refresh failed", e);
+    })
+    .finally(() => (vaultSyncing = null));
+  return vaultSyncing;
+}
+
+function applyVaultDiff({ changed, removed, folders }, announce) {
+  let reloadOpen = false;
+  const removedSet = new Set(removed);
+  for (const meta of changed) {
+    const note = findNote(meta.id);
+    if (!note) {
+      state.notes.push({ ...meta, content: undefined, dirty: false, saved: true });
+      continue;
+    }
+    if (note.dirty) continue;
+    Object.assign(note, meta, { content: undefined, vaultKey: undefined });
+    if (note.id === ui.selectedId) reloadOpen = true;
+  }
+  if (removedSet.size) {
+    // Apagada fora do app: com edição pendente, a nota fica e é gravada de novo.
+    state.notes = state.notes.filter((n) => {
+      if (!removedSet.has(n.id)) return true;
+      if (!n.dirty) return false;
+      n.saved = false;
+      n.rel = undefined;
+      return true;
+    });
+  }
+  if (folders) state.folders = folders;
+  const total = changed.length + removedSet.size;
+  if (!total && !folders) {
+    if (announce) toast("O cofre já está atualizado.");
+    return;
+  }
+  titleIndex = null;
+  notesChanged();
+  if (ui.selectedId !== null && !findNote(ui.selectedId)) ui.selectedId = null;
+  renderNotes();
+  if (reloadOpen || ui.selectedId === null) loadSelectedIntoEditor();
+  if (announce) toast(`${total} nota(s) atualizada(s) do cofre.`);
+}
+
+function onVaultConflict(note, fileName) {
+  note.dirty = false;
+  toast(`A nota foi alterada por outra pessoa. Sua versão foi salva como "${fileName}".`);
+  syncVault();
+}
+
+function startVaultPolling() {
+  clearInterval(vaultTimer);
+  vaultTimer = isVault()
+    ? setInterval(() => {
+        if (state.activeMainView === "notes" && !document.hidden) syncVault();
+      }, VAULT_POLL_MS)
+    : null;
+}
+
+/**
+ * Cópia das notas do banco local para um cofre (antes da troca): imagens vão para
+ * attachments/ e as notas (com o conteúdo) e pastas voltam para gravar depois que o cofre abrir.
+ */
+async function snapshotLocalNotes(vaultPath) {
+  const notes = state.notes.filter((n) => !n.deleted_at);
+  for (const n of notes) await ensureContent(n);
+  const names = new Set();
+  for (const n of notes) {
+    for (const img of n.content.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/gi)) {
+      const name = localImageName(img[1]);
+      if (name) names.add(name);
+    }
+  }
+  const sep = vaultPath.includes("\\") ? "\\" : "/";
+  if (names.size) await exportNoteImagesApi([...names], `${vaultPath}${sep}${ATTACHMENTS_DIR}`, true);
+  return {
+    notes: notes.map((n) => ({ ...n, pinned: false, dirty: true, saved: false, rel: undefined, disk_mtime: undefined, vaultKey: undefined })),
+    folders: state.folders.map((f) => ({ ...f })),
+  };
+}
+
+/**
+ * Troca onde as notas ficam: mode "sqlite" | "vault" (+ pasta). `copy` = leva as notas do
+ * banco local para o cofre. Devolve null ou a mensagem de erro (nada muda).
+ */
+export async function switchNotesStorage(mode, vaultPath, { copy = false } = {}) {
+  if (!hasTauri) return "Disponível apenas no aplicativo desktop.";
+  discardIfEmpty(ui.selectedId);
+  flushNotesSave();
+  await whenSaved();
+  let snapshot = null;
+  try {
+    if (copy && mode === "vault" && !isVault()) snapshot = await snapshotLocalNotes(vaultPath);
+    await notesApi.setStorage(mode, mode === "vault" ? vaultPath : null);
+  } catch (e) {
+    return String(e);
+  }
+  state.settings.notes_storage = mode;
+  if (mode === "vault") {
+    state.settings.vault_path = vaultPath;
+    state.settings.vaults = addVaultPath(knownVaults(state.settings), vaultPath);
+  }
+  await saveSettingsApi(state.settings);
+  document.dispatchEvent(new CustomEvent("notesstoragechange"));
+  ui.selectedId = null;
+  ui.scope = "all";
+  setQuery("");
+  await loadNotes();
+  if (snapshot) {
+    // Pastas que o cofre ainda não tem (mesmo caminho) e as notas, gravadas como arquivos.
+    const known = new Map(state.folders.map((f) => [fold(folderPath(state.folders, f.id)), f.id]));
+    const remap = new Map();
+    for (const f of snapshot.folders) {
+      const hit = known.get(fold(folderPath(snapshot.folders, f.id)));
+      if (hit !== undefined) remap.set(f.id, hit);
+    }
+    const ids = new Set(state.folders.map((f) => f.id));
+    for (const f of snapshot.folders) {
+      if (remap.has(f.id)) continue;
+      let id = f.id;
+      while (ids.has(id)) id++;
+      ids.add(id);
+      remap.set(f.id, id);
+    }
+    const add = snapshot.folders
+      .filter((f) => !known.has(fold(folderPath(snapshot.folders, f.id))))
+      .map((f) => ({ id: remap.get(f.id), name: f.name, parent_id: f.parent_id ? remap.get(f.parent_id) ?? 0 : 0 }));
+    state.folders = [...state.folders, ...add];
+    saveFolders();
+    const noteIds = new Set(state.notes.map((n) => n.id));
+    const fresh = snapshot.notes.map((n) => {
+      let id = n.id;
+      while (noteIds.has(id)) id++;
+      noteIds.add(id);
+      return { ...n, id, folder_id: n.folder_id ? remap.get(n.folder_id) ?? 0 : 0 };
+    });
+    state.notes.unshift(...fresh);
+    await saveNotesBulk(fresh, storeError);
+    await whenSaved();
+    await loadNotes();
+    toast(`${fresh.length} nota(s) copiada(s) para o cofre.`);
+  }
+  startVaultPolling();
+  return null;
+}
+
 /** Loads folders and note metadata from notes.db (importing notes.json on the first run). */
 export async function loadNotes() {
   try {
@@ -740,10 +911,12 @@ export async function loadNotes() {
     titleIndex = null;
     if (error) toast(`Notas antigas não importadas: ${error}`);
     // Removes image files no note references anymore (trash included); the list comes from the database.
-    else if (hasTauri && notes.length) collectImageGarbage();
+    else if (hasTauri && notes.length && !isVault()) collectImageGarbage();
   } catch (e) {
     console.error("notes load failed", e);
-    toast(`Falha ao abrir as notas: ${e}`);
+    state.notes = [];
+    state.folders = [];
+    toast(isVault() ? `Falha ao abrir o cofre: ${e}` : `Falha ao abrir as notas: ${e}`);
   }
   renderNotes();
   loadSelectedIntoEditor();
@@ -753,6 +926,7 @@ function showMoreMenu(btn) {
   const r = btn.getBoundingClientRect();
   const note = selectedNote();
   showMenu(r.left, r.bottom + 4, [
+    ...(isVault() ? [{ label: "Atualizar do Cofre", icon: "fa-solid fa-rotate", run: () => syncVault({ announce: true }) }, "sep"] : []),
     { label: "Importar Markdown…", icon: "fa-solid fa-file-import", run: importMarkdown },
     { label: "Importar Pasta de Markdown…", icon: "fa-solid fa-folder-tree", run: () => importMarkdownFolder() },
     { label: "Exportar como Markdown…", icon: "fa-solid fa-file-export", disabled: !note, run: () => exportMarkdown(note.id) },
@@ -882,8 +1056,9 @@ function deleteFolder(id) {
     }
   }
   for (const f of gone) collapsedFolders.delete(f);
-  saveFolders();
+  // As notas vão para a lixeira antes: no cofre, os arquivos saem do diretório antes de ele ser removido.
   saveNoteMeta(moved, storeError);
+  saveFolders();
   notesChanged();
   if (gone.has(scopeFolderId())) setScope("all");
   else renderNotes();
@@ -926,7 +1101,8 @@ function renderFolders() {
     scope: `f:${f.id}`,
     folderId: f.id,
     name: f.name,
-    icon: "fa-regular fa-folder",
+    // Pasta aberta = tem subpastas e está expandida.
+    icon: hasChildren && !collapsedFolders.has(f.id) ? "fa-regular fa-folder-open" : "fa-regular fa-folder",
     count: counts.get(f.id) || 0,
     editable: f.id !== 0,
     depth,
@@ -1179,7 +1355,72 @@ function renderChrome() {
   const readOnly = !note || !!note.deleted_at;
   appEl.querySelectorAll("[data-cmd], [data-popover]").forEach((btn) => (btn.disabled = readOnly));
   appEl.querySelectorAll('[data-action="graph-local"]').forEach((btn) => (btn.disabled = !note || !!note.deleted_at));
+  renderStorageLabel();
   syncGraph();
+}
+
+/** "No Meu PC" (notes.db) ou o nome do cofre, com o caminho no tooltip. */
+function renderStorageLabel() {
+  const label = document.getElementById("nt-storage-label");
+  const icon = document.getElementById("nt-storage-icon");
+  const btn = appEl.querySelector('[data-action="storage-menu"]');
+  const refresh = appEl.querySelector('[data-action="vault-refresh"]');
+  const path = state.settings.vault_path || "";
+  if (label) label.textContent = isVault() ? vaultName(path) || "Cofre" : "No Meu PC";
+  if (icon) icon.className = isVault() ? "fa-solid fa-folder-open" : "fa-solid fa-hard-drive";
+  if (btn) btn.title = isVault() ? `Cofre: ${path}\nClique para trocar de cofre` : "Banco local deste computador\nClique para trocar de cofre";
+  if (refresh) refresh.hidden = !isVault();
+}
+
+// ---------- Troca rápida de cofre (barra lateral) ----------
+
+let storageSwitching = false;
+
+/** Abre o banco local ou um cofre; erro = aviso e nada muda. */
+async function changeStorage(mode, path = null) {
+  if (storageSwitching) return;
+  const current = isVault() ? state.settings.vault_path : null;
+  if (mode === "sqlite" ? !current : current && sameVaultPath(current, path)) return;
+  storageSwitching = true;
+  toast(mode === "vault" ? `Abrindo o cofre "${vaultName(path)}"…` : "Abrindo o banco local…");
+  const error = await switchNotesStorage(mode, path);
+  storageSwitching = false;
+  toast(error ? `Não foi possível abrir: ${error}` : mode === "vault" ? `Cofre "${vaultName(path)}" aberto.` : "Banco local aberto.");
+}
+
+async function openOtherVault() {
+  if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
+  const dir = await openDirectoryDialogApi({ title: "Abrir cofre de notas (pasta de Markdown)" });
+  if (dir) changeStorage("vault", dir);
+}
+
+function forgetVault(path) {
+  state.settings.vaults = knownVaults(state.settings).filter((p) => !sameVaultPath(p, path));
+  if (state.settings.vault_path && sameVaultPath(state.settings.vault_path, path)) state.settings.vault_path = "";
+  saveSettingsApi(state.settings);
+  document.dispatchEvent(new CustomEvent("notesstoragechange"));
+  toast(`"${vaultName(path)}" saiu da lista (a pasta não foi tocada).`);
+}
+
+function showStorageMenu(btn) {
+  const r = btn.getBoundingClientRect();
+  const current = isVault() ? state.settings.vault_path : null;
+  const vaults = knownVaults(state.settings);
+  const labels = vaultLabels(vaults);
+  const isCurrent = (p) => !!current && sameVaultPath(p, current);
+  const items = [
+    { header: "Onde ficam as notas" },
+    { label: "Banco local (No Meu PC)", icon: current ? "fa-solid fa-hard-drive" : "fa-solid fa-check", run: () => changeStorage("sqlite") },
+    ...vaults.map((p, i) => ({ label: labels[i], icon: isCurrent(p) ? "fa-solid fa-check" : "fa-regular fa-folder", run: () => changeStorage("vault", p) })),
+    "sep",
+    { label: "Abrir outro cofre…", icon: "fa-solid fa-folder-plus", run: openOtherVault },
+  ];
+  const inactive = vaults.map((p, i) => [p, labels[i]]).filter(([p]) => !isCurrent(p));
+  if (inactive.length) {
+    items.push("sep", { header: "Remover da lista" });
+    for (const [p, label] of inactive) items.push({ label, icon: "fa-solid fa-xmark", indent: true, run: () => forgetVault(p) });
+  }
+  showMenu(r.left, r.bottom + 4, items);
 }
 
 export function renderNotes() {
@@ -1487,6 +1728,8 @@ const ACTIONS = {
   pin: () => ui.selectedId !== null && togglePin(ui.selectedId),
   "new-folder": () => createFolder(),
   "import-folder": () => importMarkdownFolder(),
+  "vault-refresh": () => syncVault({ announce: true }),
+  "storage-menu": showStorageMenu,
   "show-folders": () => {
     ui.pane = "folders";
     renderNotes();
@@ -1585,6 +1828,12 @@ export function initNotes() {
     create: createLinkedNote,
     currentId: () => ui.selectedId,
   });
+  setVaultContext({
+    linkTitle: (a) => (a.dataset.note ? linkedTitle(Number(a.dataset.note)) : null) || "",
+    onConflict: onVaultConflict,
+  });
+  window.addEventListener("focus", () => state.activeMainView === "notes" && syncVault());
+  startVaultPolling();
   initEditor({ onInput: handleEditorInput, onSelection: handleSelectionState });
   propsPanel = createPropsPanel(document.getElementById("nt-props"), {
     editor: document.getElementById("nt-editor"),
@@ -1667,6 +1916,7 @@ export function initNotes() {
     }
     if (!state.desktopMode) openCompactHome();
     else renderChrome();
+    syncVault();
   });
 
   document.addEventListener("windowmodechange", () => {
@@ -1687,6 +1937,24 @@ export function initNotes() {
 
   window.addEventListener("beforeunload", () => {
     if (saveTimer) flushNotesSave();
+  });
+
+  registerApp("notes", {
+    flush: async () => {
+      discardIfEmpty(ui.selectedId);
+      flushNotesSave();
+      await whenSaved();
+    },
+    reload: async () => {
+      await loadNotes();
+      startVaultPolling();
+    },
+  });
+  // Outra janela trocou o armazenamento (banco local <-> cofre) ou copiou notas para o cofre.
+  document.addEventListener("notesreload", async () => {
+    await loadNotes();
+    startVaultPolling();
+    document.dispatchEvent(new CustomEvent("notesstoragechange"));
   });
 
   loadSelectedIntoEditor();

@@ -1,173 +1,155 @@
 import { state } from "../state.js";
-import { formatTime } from "../utils/date.js";
 import { playChimeSound } from "../utils/audio.js";
-import { saveTodosApi } from "../api.js";
+import { cardOf, nextPhase, pomoMinutes } from "../utils/kanbanModel.js";
 
-const modalPomodoro = document.getElementById("modal-pomodoro");
-const pomodoroModalClose = document.getElementById("pomodoro-modal-close");
-const pomoTaskNameEl = document.getElementById("pomodoro-task-name");
-const pomoModeBadgeEl = document.getElementById("pomodoro-mode-badge");
-const pomoBadgeIconEl = document.getElementById("pomo-badge-icon");
-const pomoBadgeTextEl = document.getElementById("pomo-badge-text");
-const pomoTimeDisplayEl = document.getElementById("pomodoro-time-display");
-const btnPomoToggle = document.getElementById("btn-pomo-toggle");
-const pomoToggleIconEl = document.getElementById("pomo-toggle-icon");
-const pomoToggleTextEl = document.getElementById("pomo-toggle-text");
-const btnPomoReset = document.getElementById("btn-pomo-reset");
-const pomoWorkInput = document.getElementById("pomo-work-input");
-const pomoBreakInput = document.getElementById("pomo-break-input");
+// Motor do Pomodoro dos cards (sem interface própria: o board e a barra de foco ficam em tasks.js).
+// O tempo é medido por timestamp (endsAt), não contando ticks: não deriva e continua certo depois
+// de a janela ficar oculta/suspensa. Eventos: "pomodorotick" (a cada segundo, só textos/anéis)
+// e "pomodorochange" (início, pausa, troca de fase, fim).
 
-let onRenderCallback = () => {};
+const ps = state.pomoState;
+let ticker = null;
+let save = () => {};
 
-export function setPomodoroRenderCallback(cb) {
-  onRenderCallback = cb;
+export const PHASE_LABEL = { work: "Foco", break: "Pausa", long: "Pausa longa" };
+
+/** `onSave` grava o documento (o motor altera card.pomo.count/focus_ms). */
+export function initPomodoro({ onSave }) {
+  save = onSave;
+  document.addEventListener("visibilitychange", () => ps.running && tick());
 }
 
-export function openPomodoroModal(todo) {
-  state.activePomoTaskId = todo.id;
-  state.pomoState.taskId = todo.id;
+const doc = () => state.kanban;
+export const pomoCard = () => (ps.cardId != null && doc() ? cardOf(doc(), ps.cardId) : null);
+/** O card tem uma sessão (rodando ou pausada). */
+export const hasPomo = (id) => ps.cardId === id;
+export const isPomoRunning = (id = ps.cardId) => ps.running && ps.cardId === id;
 
-  pomoTaskNameEl.textContent = todo.text;
+export function pomoRemainingMs() {
+  return Math.max(0, ps.running ? ps.endsAt - Date.now() : ps.remainingMs);
+}
 
-  if (!state.pomoState.secondsRemaining || state.pomoState.taskId !== todo.id) {
-    state.pomoState.mode = "work";
-    state.pomoState.workMinutes = todo.pomoWorkMinutes || 25;
-    state.pomoState.breakMinutes = todo.pomoBreakMinutes || 5;
-    state.pomoState.secondsRemaining = state.pomoState.workMinutes * 60;
+export function pomoProgress() {
+  return ps.totalMs ? 1 - pomoRemainingMs() / ps.totalMs : 0;
+}
+
+/** "24:59" */
+export function pomoClock(ms = pomoRemainingMs()) {
+  const s = Math.ceil(ms / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function phaseMs(phase, card) {
+  const m = pomoMinutes(doc(), card);
+  return (phase === "work" ? m.work : phase === "break" ? m.break : m.long) * 60000;
+}
+
+function emit(name) {
+  document.dispatchEvent(new CustomEvent(name));
+}
+
+/** Soma ao card o foco corrido desde o último registro. */
+function commitFocus(now = Date.now()) {
+  if (ps.phase !== "work" || !ps.running || !ps.segStart) return;
+  const card = pomoCard();
+  if (card) card.pomo.focus_ms += Math.max(0, Math.min(now, ps.endsAt) - ps.segStart);
+  ps.segStart = now;
+}
+
+function setTicker(on) {
+  clearInterval(ticker);
+  ticker = on ? setInterval(tick, 1000) : null;
+}
+
+function run(now = Date.now()) {
+  ps.running = true;
+  ps.endsAt = now + ps.remainingMs;
+  ps.segStart = ps.phase === "work" ? now : 0;
+  setTicker(true);
+}
+
+function tick() {
+  if (!ps.running) return;
+  if (ps.endsAt - Date.now() <= 0) finishPhase();
+  else emit("pomodorotick");
+}
+
+function enterPhase(phase, card, keepRunning) {
+  ps.phase = phase;
+  ps.totalMs = ps.remainingMs = phaseMs(phase, card);
+  ps.running = false;
+  ps.segStart = 0;
+  if (keepRunning) run();
+  else setTicker(false);
+}
+
+function finishPhase() {
+  const card = pomoCard();
+  commitFocus(ps.endsAt);
+  if (ps.phase === "work") {
+    ps.worksDone++;
+    if (card) card.pomo.count++;
   }
-
-  pomoWorkInput.value = state.pomoState.workMinutes;
-  pomoBreakInput.value = state.pomoState.breakMinutes;
-
-  updatePomodoroUI();
-  modalPomodoro.hidden = false;
+  playChimeSound();
+  enterPhase(nextPhase(ps.phase, ps.worksDone, doc().pomo), card, doc().pomo.auto_next);
+  save();
+  emit("pomodorochange");
 }
 
-export function updatePomodoroUI() {
-  pomoTimeDisplayEl.textContent = formatTime(state.pomoState.secondsRemaining);
-
-  if (state.pomoState.mode === "work") {
-    pomoModeBadgeEl.className = "pomo-mode-badge work";
-    pomoBadgeIconEl.className = "fa-solid fa-brain";
-    pomoBadgeTextEl.textContent = "Foco";
-  } else {
-    pomoModeBadgeEl.className = "pomo-mode-badge break";
-    pomoBadgeIconEl.className = "fa-solid fa-mug-hot";
-    pomoBadgeTextEl.textContent = "Pausa";
-  }
-
-  if (state.pomoState.isRunning) {
-    pomoToggleIconEl.className = "fa-solid fa-pause";
-    pomoToggleTextEl.textContent = "Pausar";
-  } else {
-    pomoToggleIconEl.className = "fa-solid fa-play";
-    pomoToggleTextEl.textContent = "Iniciar";
-  }
+/** Começa uma sessão no card (ou retoma, se a sessão já é dele). */
+export function startPomodoro(card) {
+  if (ps.cardId === card.id) return resumePomodoro();
+  if (ps.cardId != null) stopPomodoro({ silent: true });
+  ps.cardId = card.id;
+  ps.worksDone = 0;
+  enterPhase("work", card, true);
+  emit("pomodorochange");
 }
 
-export function startPomodoroTimer() {
-  if (state.pomoState.isRunning) return;
-
-  state.pomoState.isRunning = true;
-  updatePomodoroUI();
-
-  state.pomoState.intervalId = setInterval(() => {
-    if (state.pomoState.secondsRemaining > 0) {
-      state.pomoState.secondsRemaining--;
-      pomoTimeDisplayEl.textContent = formatTime(state.pomoState.secondsRemaining);
-    } else {
-      playChimeSound();
-      if (state.pomoState.mode === "work") {
-        state.pomoState.mode = "break";
-        state.pomoState.secondsRemaining = state.pomoState.breakMinutes * 60;
-      } else {
-        state.pomoState.mode = "work";
-        state.pomoState.secondsRemaining = state.pomoState.workMinutes * 60;
-      }
-      updatePomodoroUI();
-    }
-    // A lista/detalhe de tarefas mostram o tempo restante sem re-renderizar tudo.
-    document.dispatchEvent(new CustomEvent("pomodorotick"));
-  }, 1000);
+export function pausePomodoro() {
+  if (!ps.running) return;
+  commitFocus();
+  ps.remainingMs = pomoRemainingMs();
+  ps.running = false;
+  ps.segStart = 0;
+  setTicker(false);
+  save();
+  emit("pomodorochange");
 }
 
-export function pausePomodoroTimer() {
-  if (!state.pomoState.isRunning) return;
-
-  state.pomoState.isRunning = false;
-  if (state.pomoState.intervalId) {
-    clearInterval(state.pomoState.intervalId);
-    state.pomoState.intervalId = null;
-  }
-  updatePomodoroUI();
+export function resumePomodoro() {
+  if (ps.running || ps.cardId == null) return;
+  run();
+  emit("pomodorochange");
 }
 
-export function resetPomodoroTimer() {
-  pausePomodoroTimer();
-  if (state.pomoState.mode === "work") {
-    state.pomoState.secondsRemaining = state.pomoState.workMinutes * 60;
-  } else {
-    state.pomoState.secondsRemaining = state.pomoState.breakMinutes * 60;
-  }
-  updatePomodoroUI();
+export function togglePomodoro() {
+  if (ps.running) pausePomodoro();
+  else resumePomodoro();
 }
 
-export function initPomodoro() {
-  pomodoroModalClose.addEventListener("click", () => {
-    modalPomodoro.hidden = true;
-  });
+/** Pula para a próxima fase (o foco interrompido conta o tempo, mas não o 🍅). */
+export function skipPhase() {
+  if (ps.cardId == null) return;
+  const wasRunning = ps.running;
+  commitFocus();
+  enterPhase(nextPhase(ps.phase, ps.worksDone, doc().pomo), pomoCard(), wasRunning);
+  save();
+  emit("pomodorochange");
+}
 
-  modalPomodoro.addEventListener("click", (e) => {
-    if (e.target === modalPomodoro) {
-      modalPomodoro.hidden = true;
-    }
-  });
+export function stopPomodoro({ silent = false } = {}) {
+  if (ps.cardId == null) return;
+  commitFocus();
+  setTicker(false);
+  Object.assign(ps, { cardId: null, phase: "work", running: false, endsAt: 0, segStart: 0, worksDone: 0 });
+  save();
+  if (!silent) emit("pomodorochange");
+}
 
-  btnPomoToggle.addEventListener("click", () => {
-    if (state.pomoState.isRunning) {
-      pausePomodoroTimer();
-    } else {
-      startPomodoroTimer();
-    }
-    onRenderCallback();
-  });
-
-  btnPomoReset.addEventListener("click", () => {
-    resetPomodoroTimer();
-    onRenderCallback();
-  });
-
-  pomoWorkInput.addEventListener("change", () => {
-    let val = parseInt(pomoWorkInput.value, 10);
-    if (isNaN(val) || val < 1) val = 25;
-    state.pomoState.workMinutes = val;
-
-    const currentTodo = state.todos.find((t) => t.id === state.pomoState.taskId);
-    if (currentTodo) {
-      currentTodo.pomoWorkMinutes = val;
-      saveTodosApi(state.todos);
-    }
-
-    if (state.pomoState.mode === "work" && !state.pomoState.isRunning) {
-      state.pomoState.secondsRemaining = val * 60;
-      updatePomodoroUI();
-    }
-  });
-
-  pomoBreakInput.addEventListener("change", () => {
-    let val = parseInt(pomoBreakInput.value, 10);
-    if (isNaN(val) || val < 1) val = 5;
-    state.pomoState.breakMinutes = val;
-
-    const currentTodo = state.todos.find((t) => t.id === state.pomoState.taskId);
-    if (currentTodo) {
-      currentTodo.pomoBreakMinutes = val;
-      saveTodosApi(state.todos);
-    }
-
-    if (state.pomoState.mode === "break" && !state.pomoState.isRunning) {
-      state.pomoState.secondsRemaining = val * 60;
-      updatePomodoroUI();
-    }
-  });
+/** Minutos alterados com a fase parada e no início: a fase atual passa a ter a nova duração. */
+export function refreshPhaseLength() {
+  if (ps.cardId == null || ps.running || ps.remainingMs !== ps.totalMs) return;
+  ps.totalMs = ps.remainingMs = phaseMs(ps.phase, pomoCard());
+  emit("pomodorochange");
 }

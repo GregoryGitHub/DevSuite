@@ -25,6 +25,25 @@ export function noteImageUrl(name) {
   return IMG_BASE + name;
 }
 
+// Notes in a vault (notes_vault.rs): any file of the vault is served as
+// noteimg://localhost/v/<relative path, URL-encoded per segment>.
+const VAULT_URL_RE = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)v\/(.+)$/i;
+
+export function vaultImageUrl(rel) {
+  return `${IMG_BASE}v/${rel.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+/** Vault-relative path of a vault image URL, or null. */
+export function vaultImageRel(src) {
+  const m = VAULT_URL_RE.exec(src || "");
+  if (!m) return null;
+  try {
+    return m[1].split("/").map(decodeURIComponent).join("/");
+  } catch {
+    return null;
+  }
+}
+
 /** File name of an image stored by the app, or null for remote/data URLs. */
 export function localImageName(src) {
   const m = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)([a-z0-9]+\.[a-z0-9]+)$/i.exec(src || "");
@@ -38,7 +57,7 @@ export function noteImageNames(html) {
 }
 
 function isAllowedImageSrc(src) {
-  return !!localImageName(src) || /^https?:\/\//i.test(src) || /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,/i.test(src);
+  return !!localImageName(src) || !!vaultImageRel(src) || /^https?:\/\//i.test(src) || /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,/i.test(src);
 }
 
 /** HTML for an image; width/height keep the layout stable while the file loads. */

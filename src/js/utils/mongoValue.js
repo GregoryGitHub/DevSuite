@@ -266,17 +266,30 @@ export function createDocState() {
   return { columns: [], index: new Map(), docs: [] };
 }
 
+function addColumn(state, k) {
+  const col = { name: k, kind: "other", type: "mongo", types: new Set(), full_type: "", nullable: k !== "_id", is_pk: k === "_id", is_identity: k === "_id", blank: k === "_id" ? GENERATED : undefined };
+  state.index.set(k, state.columns.length);
+  state.columns.push(col);
+  return col;
+}
+
+/** Coluna _id antes de chegar qualquer documento: coleção vazia continua editável (inserir). */
+export function ensureIdColumn(state) {
+  if (!state.index.has("_id")) addColumn(state, "_id");
+}
+
+/** A projeção esconde o _id? ({ _id: 0 } / { _id: false }) */
+export function projectionHidesId(projection) {
+  const v = projection && typeof projection === "object" ? projection._id : undefined;
+  return v === false || v === 0 || v?.$numberInt === "0";
+}
+
 /** Converte um lote; devolve { rows, added } (added = colunas novas, para o grid acrescentar). */
 export function docsToRows(state, docs) {
   const added = [];
   for (const d of docs) {
     for (const k of Object.keys(d)) {
-      if (!state.index.has(k)) {
-        const col = { name: k, kind: "other", type: "mongo", types: new Set(), full_type: "", nullable: k !== "_id", is_pk: k === "_id", is_identity: k === "_id", blank: k === "_id" ? GENERATED : undefined };
-        state.index.set(k, state.columns.length);
-        state.columns.push(col);
-        added.push(col);
-      }
+      if (!state.index.has(k)) added.push(addColumn(state, k));
       const col = state.columns[state.index.get(k)];
       const t = bsonType(d[k]);
       if (t !== "null" && !col.types.has(t)) {

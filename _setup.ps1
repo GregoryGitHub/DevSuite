@@ -8,5 +8,5 @@ if (-not $hasCli) {
     cargo install tauri-cli --version '^2.0' --locked
 }
 
-Write-Host "Generating icons from circle-check-solid-full.svg..."
+Write-Host "Generating icons from dev-suite.svg..."
 & (Join-Path $PSScriptRoot '_gen_icons.ps1')

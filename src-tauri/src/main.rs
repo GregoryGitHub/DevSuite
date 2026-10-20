@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_windows;
 mod db;
 mod http;
 mod note_images;
 mod note_pdf;
 mod notes_db;
+mod notes_vault;
 mod persist;
 mod rabbit;
 
@@ -15,32 +17,17 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
-
-#[derive(Serialize, Deserialize, Clone)]
-struct Todo {
-    id: u64,
-    text: String,
-    done: bool,
-    #[serde(default)]
-    date: String,
-    #[serde(default)]
-    is_my_day: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    completed_date: Option<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    note: String,
-}
 
 /// true enquanto a janela está no modo desktop (notas em janela grande).
 #[derive(Default)]
 struct DesktopMode(AtomicBool);
 
 const TRAY_SIZE: (f64, f64) = (370.0, 530.0);
-const DESKTOP_SIZE: (f64, f64) = (1100.0, 720.0);
+// Largura em que a barra das Notas (pastas + lista + editor com busca) cabe inteira.
+const DESKTOP_SIZE: (f64, f64) = (1280.0, 760.0);
 const DESKTOP_MIN_SIZE: (f64, f64) = (720.0, 460.0);
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -55,13 +42,25 @@ struct AppSettings {
     /// Notas: propriedades (front-matter), filtros relacionais e grafo.
     #[serde(default)]
     zettelkasten: bool,
+    /// Notas: "sqlite" (notes.db, padrão) | "vault" (pasta de Markdown em `vault_path`).
+    #[serde(default = "default_notes_storage")]
+    notes_storage: String,
+    #[serde(default)]
+    vault_path: String,
+    /// Cofres já usados (troca rápida na barra lateral das Notas).
+    #[serde(default)]
+    vaults: Vec<String>,
+}
+
+fn default_notes_storage() -> String {
+    "sqlite".into()
 }
 
 fn default_theme() -> String {
     "system".into()
 }
 
-fn data_file(app: &tauri::AppHandle) -> PathBuf {
+fn app_file(app: &tauri::AppHandle, name: &str) -> PathBuf {
     let mut dir = app
         .path()
         .app_data_dir()
@@ -69,7 +68,7 @@ fn data_file(app: &tauri::AppHandle) -> PathBuf {
     if !dir.exists() {
         let _ = fs::create_dir_all(&dir);
     }
-    dir.push("todos.json");
+    dir.push(name);
     dir
 }
 
@@ -85,21 +84,51 @@ fn settings_file(app: &tauri::AppHandle) -> PathBuf {
     dir
 }
 
+/// Board kanban das Tarefas (formato em `src/js/utils/kanbanModel.js`). `null` = ainda não existe
+/// (o JS migra o `todos.json` antigo).
 #[tauri::command]
-fn load_todos(app: tauri::AppHandle) -> Vec<Todo> {
-    let path = data_file(&app);
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<Vec<Todo>>(&s).ok())
-        .unwrap_or_default()
+fn load_kanban_data(app: tauri::AppHandle) -> serde_json::Value {
+    let path = app_file(&app, "kanban.json");
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return serde_json::Value::Null;
+    };
+    match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("kanban.json inválido ({e}); salvando cópia em kanban.json.bak");
+            let _ = fs::copy(&path, path.with_extension("json.bak"));
+            serde_json::Value::Null
+        }
+    }
 }
 
 #[tauri::command]
-fn save_todos(app: tauri::AppHandle, todos: Vec<Todo>) -> Result<(), String> {
-    let path = data_file(&app);
-    let json = serde_json::to_string_pretty(&todos).map_err(|e| e.to_string())?;
-    persist::write(path, json);
+fn save_kanban_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+    persist::write(app_file(&app, "kanban.json"), json);
     Ok(())
+}
+
+/// Lista de tarefas antiga (`todos.json`), só para a migração para o board.
+/// `None` = não existe; erro = ilegível (o arquivo não é tocado).
+#[tauri::command]
+fn load_todos(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let path = app_file(&app, "todos.json");
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    serde_json::from_str(&raw).map(Some).map_err(|e| format!("todos.json ilegível: {e}"))
+}
+
+/// Depois de gravar o `kanban.json` migrado: `todos.json` → `todos.json.migrated`.
+#[tauri::command]
+fn kanban_migrated(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app_file(&app, "todos.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    persist::flush();
+    fs::rename(&path, path.with_extension("json.migrated")).map_err(|e| e.to_string())
 }
 
 /// Último valor de autostart aplicado no sistema (evita rodar `reg.exe` a cada save).
@@ -121,6 +150,8 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
     let path = settings_file(&app);
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     persist::write(path, json);
+    // As outras janelas (apps desatachados) acompanham tema, Zettelkasten, cofre etc.
+    let _ = app.emit("settings-changed", &settings);
 
     // Só mexe no autostart quando ele muda (o tema, por exemplo, também salva settings).
     {
@@ -141,32 +172,29 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
 
     #[cfg(target_os = "windows")]
     {
+        const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+        let delete = |name: &str| {
+            let _ = std::process::Command::new("reg").args(["delete", RUN_KEY, "/v", name, "/f"]).output();
+        };
+        // Entrada do nome antigo (TodoRS): sai sempre, para não abrir duas vezes.
+        delete("TodoRS");
         if let Ok(exe_path) = std::env::current_exe() {
-            let exe_str = exe_path.to_string_lossy();
             if autostart {
                 let _ = std::process::Command::new("reg")
-                    .args(&[
+                    .args([
                         "add",
-                        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                        RUN_KEY,
                         "/v",
-                        "TodoRS",
+                        "DevSuite",
                         "/t",
                         "REG_SZ",
                         "/d",
-                        &format!("\"{}\"", exe_str),
+                        &format!("\"{}\"", exe_path.to_string_lossy()),
                         "/f",
                     ])
                     .output();
             } else {
-                let _ = std::process::Command::new("reg")
-                    .args(&[
-                        "delete",
-                        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-                        "/v",
-                        "TodoRS",
-                        "/f",
-                    ])
-                    .output();
+                delete("DevSuite");
             }
         }
     }
@@ -176,11 +204,12 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Ok(config_dir) = app.path().config_dir() {
                 let autostart_dir = config_dir.join("autostart");
-                let desktop_file = autostart_dir.join("todo-rs.desktop");
+                let _ = fs::remove_file(autostart_dir.join("todo-rs.desktop")); // nome antigo
+                let desktop_file = autostart_dir.join("dev-suite.desktop");
                 if autostart {
                     let _ = fs::create_dir_all(&autostart_dir);
                     let content = format!(
-                        "[Desktop Entry]\nType=Application\nName=TodoRS\nExec=env GDK_BACKEND=x11 \"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+                        "[Desktop Entry]\nType=Application\nName=Dev Suite\nExec=env GDK_BACKEND=x11 \"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
                         exe_path.display()
                     );
                     let _ = fs::write(desktop_file, content);
@@ -192,16 +221,29 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
     }
 }
 
+/// Instalações antigas registraram o autostart como "TodoRS" (apontando para o exe antigo):
+/// regrava com o nome e o caminho atuais. Roda fora da thread principal.
+fn migrate_autostart(app: &tauri::AppHandle) {
+    #[cfg(target_os = "windows")]
+    let old = std::process::Command::new("reg")
+        .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "TodoRS"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    #[cfg(target_os = "linux")]
+    let old = app.path().config_dir().map(|d| d.join("autostart").join("todo-rs.desktop").exists()).unwrap_or(false);
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let old = false;
+    if old {
+        apply_autostart(app, true);
+    }
+}
+
 #[tauri::command]
 fn hide_window(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
     }
-}
-
-#[tauri::command]
-fn exit_app(app: tauri::AppHandle) {
-    app.exit(0);
 }
 
 /// Alterna entre o modo bandeja (janela compacta presa à tray) e o modo desktop
@@ -224,7 +266,14 @@ fn set_desktop_mode(
         let _ = w.set_resizable(true);
         let _ = w.set_maximizable(true);
         let _ = w.set_min_size(Some(tauri::LogicalSize::new(DESKTOP_MIN_SIZE.0, DESKTOP_MIN_SIZE.1)));
-        let _ = w.set_size(tauri::LogicalSize::new(DESKTOP_SIZE.0, DESKTOP_SIZE.1));
+        // Em telas pequenas, no máximo 92% da área do monitor.
+        let (mut width, mut height) = DESKTOP_SIZE;
+        if let Ok(Some(m)) = w.current_monitor() {
+            let screen = m.size().to_logical::<f64>(m.scale_factor());
+            width = width.min(screen.width * 0.92).max(DESKTOP_MIN_SIZE.0);
+            height = height.min(screen.height * 0.92).max(DESKTOP_MIN_SIZE.1);
+        }
+        let _ = w.set_size(tauri::LogicalSize::new(width, height));
         let _ = w.set_shadow(true);
         let _ = w.center();
     } else {
@@ -247,18 +296,15 @@ fn set_desktop_mode(
     }
 }
 
+/// Minimiza a janela que chamou (a principal ou uma desatachada).
 #[tauri::command]
-fn minimize_window(app: tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.minimize();
-    }
+fn minimize_window(window: tauri::WebviewWindow) {
+    let _ = window.minimize();
 }
 
 #[tauri::command]
-fn toggle_maximize(app: tauri::AppHandle) -> bool {
-    let Some(w) = app.get_webview_window("main") else {
-        return false;
-    };
+fn toggle_maximize(window: tauri::WebviewWindow) -> bool {
+    let w = window;
     if w.is_maximized().unwrap_or(false) {
         let _ = w.unmaximize();
         false
@@ -380,9 +426,23 @@ fn main() {
         }
     }
     tauri::Builder::default()
+        // Primeiro plugin: uma 2ª execução (ex.: atalho fixado "--app=http") só avisa esta.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            match app_windows::app_arg(&argv) {
+                Some(id) => {
+                    let app = app.clone();
+                    // Criar janela fora da thread do loop de eventos.
+                    tauri::async_runtime::spawn(async move {
+                        let _ = app_windows::open(&app, id, true);
+                    });
+                }
+                None => show_window(app, None),
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(DesktopMode::default())
+        .manage(app_windows::AppWindows::default())
         .manage(notes_db::NotesDb::default())
         .manage(db::DbSessions::default())
         .manage(db::DbInflight::default())
@@ -394,8 +454,10 @@ fn main() {
         .manage(rabbit::RmqPasswords::default())
         .manage(rabbit::RmqCaptures::default())
         .invoke_handler(tauri::generate_handler![
+            load_kanban_data,
+            save_kanban_data,
             load_todos,
-            save_todos,
+            kanban_migrated,
             notes_db::notes_list,
             note_pdf::notes_print_pdf,
             notes_db::notes_get,
@@ -410,10 +472,18 @@ fn main() {
             notes_db::notes_legacy,
             notes_db::notes_import,
             notes_db::notes_gc_images,
+            notes_db::notes_set_storage,
+            notes_db::notes_vault_refresh,
+            notes_db::notes_vault_files,
             load_settings,
             save_settings,
             hide_window,
-            exit_app,
+            app_windows::exit_app,
+            app_windows::app_window_open,
+            app_windows::app_window_close,
+            app_windows::app_window_focus,
+            app_windows::app_windows_list,
+            app_windows::app_flushed,
             set_desktop_mode,
             minimize_window,
             toggle_maximize,
@@ -438,6 +508,7 @@ fn main() {
             db::db_introspect,
             db::db_table_info,
             db::db_ddl,
+            db::db_database_script,
             db::db_table_schema,
             db::db_execute,
             db::db_cancel,
@@ -477,21 +548,22 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                // Desatachada: grava e volta para a principal. Principal: só se esconde.
+                if !app_windows::close_requested(window.app_handle(), window) {
+                    let _ = window.hide();
+                }
             }
         })
         .setup(|app| {
-            let show_i = MenuItem::with_id(app, "show", "Mostrar", true, None::<&str>)?;
-            let hide_i = MenuItem::with_id(app, "hide", "Ocultar", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &hide_i, &quit_i])?;
+            let detached = app_windows::load(app.handle());
+            let menu = app_windows::tray_menu(app.handle())?;
 
-            let tray_white = tauri::image::Image::new(include_bytes!("../icons/tray_white.rgba"), 64, 64);
+            let tray_white = tauri::image::Image::from_bytes(include_bytes!("../icons/tray_white.png"))?;
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(tray_white)
                 .icon_as_template(true)
-                .tooltip("Todo")
+                .tooltip("Dev Suite")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -504,9 +576,13 @@ fn main() {
                         }
                     }
                     "quit" => {
-                        app.exit(0);
+                        tauri::async_runtime::spawn(app_windows::exit_all(app.clone()));
                     }
-                    _ => {}
+                    other => {
+                        if let Some(id) = other.strip_prefix("focus:") {
+                            app_windows::focus_app(app, id);
+                        }
+                    }
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
@@ -523,8 +599,25 @@ fn main() {
 
             // Check if start_minimized is false, then show window on launch
             let settings = load_settings(app.handle().clone());
-            if !settings.start_minimized {
+            // Atalho fixado de um app ("--app=http"): abre só ele; a principal fica na bandeja.
+            let args: Vec<String> = std::env::args().collect();
+            let launch_app = app_windows::app_arg(&args);
+            if !settings.start_minimized && launch_app.is_none() {
                 show_window(app.handle(), None);
+            }
+            // Apps que estavam soltos ao sair reabrem nas suas janelas.
+            for id in &detached {
+                let show = !settings.start_minimized || launch_app == Some(id.as_str());
+                if let Err(e) = app_windows::open(app.handle(), id, show) {
+                    eprintln!("falha ao reabrir {id}: {e}");
+                }
+            }
+            if let Some(id) = launch_app {
+                app_windows::open(app.handle(), id, true)?;
+            }
+            if settings.autostart {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || migrate_autostart(&handle));
             }
 
             Ok(())

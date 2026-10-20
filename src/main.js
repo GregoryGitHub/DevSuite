@@ -1,29 +1,24 @@
 import { state } from "./js/state.js";
-import { getTodayStr } from "./js/utils/date.js";
-import { loadTodosApi, loadSettingsApi, loadHttpDataApi, loadDbDataApi } from "./js/api.js";
-import { initTasks, renderTasks } from "./js/components/tasks.js";
+import { loadSettingsApi, loadHttpDataApi, loadDbDataApi } from "./js/api.js";
+import { SOLO_APP } from "./js/windowContext.js";
+import { initTasks, reloadKanban } from "./js/components/tasks.js";
 import { initNotes, loadNotes } from "./js/components/notes.js";
 import { initHttp, setHttpData } from "./js/components/http.js";
 import { initJsonFormatter } from "./js/components/jsonFormatter.js";
 import { initDb, setDbData } from "./js/components/db.js";
 import { initRabbit, loadRabbit } from "./js/components/rabbit.js";
-import { initPomodoro, setPomodoroRenderCallback } from "./js/components/pomodoro.js";
-import { initSettings, updateSettingsUI } from "./js/components/settings.js";
+import { initSettings, initSettingsSync, updateSettingsUI } from "./js/components/settings.js";
+import { initNotesStorage } from "./js/components/notesStorage.js";
 import { initWindowControls } from "./js/components/windowControls.js";
 import { initWindowMode } from "./js/components/windowMode.js";
-import { initRescheduleModal } from "./js/components/reschedule.js";
 import { initTheme, syncThemeFromSettings } from "./js/components/theme.js";
+import { initDetach } from "./js/components/detach.js";
+
+// Janela principal: todos os apps. Janela desatachada (SOLO_APP): só aquele app.
+const runs = (view) => !SOLO_APP || SOLO_APP === view;
 
 async function load() {
   try {
-    const rawTodos = await loadTodosApi();
-    const today = getTodayStr();
-    state.todos = (rawTodos || []).map((t) => ({
-      ...t,
-      date: t.date || today,
-      is_my_day: t.is_my_day ?? (t.date === today),
-    }));
-
     state.settings = { ...state.settings, ...(await loadSettingsApi()) };
   } catch (e) {
     console.error("load failed", e);
@@ -31,61 +26,60 @@ async function load() {
 
   syncThemeFromSettings();
   updateSettingsUI();
-  renderTasks();
+  if (runs("tasks")) {
+    // kanban.json (na 1ª execução, migrado do todos.json antigo).
+    await reloadKanban();
+  }
   // notes.db (SQLite): only metadata here; each note's HTML loads when it is opened.
-  await loadNotes();
+  if (runs("notes")) await loadNotes();
 
-  try {
-    setHttpData(await loadHttpDataApi());
-  } catch (e) {
-    console.error("http load failed", e);
-    setHttpData({});
+  if (runs("http")) {
+    try {
+      setHttpData(await loadHttpDataApi());
+    } catch (e) {
+      console.error("http load failed", e);
+      setHttpData({});
+    }
   }
 
-  try {
-    setDbData(await loadDbDataApi());
-  } catch (e) {
-    console.error("db load failed", e);
-    setDbData({});
+  if (runs("db")) {
+    try {
+      setDbData(await loadDbDataApi());
+    } catch (e) {
+      console.error("db load failed", e);
+      setDbData({});
+    }
   }
 
   // rabbit.db (SQLite): conexões, estado da interface e gravações.
-  await loadRabbit();
+  if (runs("rabbit")) await loadRabbit();
 }
 
 function initGlobalShortcutListeners() {
-  const modalPomodoro = document.getElementById("modal-pomodoro");
-  const modalReschedule = document.getElementById("modal-reschedule");
   const menuDropdown = document.getElementById("menu-dropdown");
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      if (!modalPomodoro.hidden) {
-        modalPomodoro.hidden = true;
-      } else if (!modalReschedule.hidden) {
-        modalReschedule.hidden = true;
-      } else if (!menuDropdown.hidden) {
-        menuDropdown.hidden = true;
-      }
+      if (!menuDropdown.hidden) menuDropdown.hidden = true;
     }
   });
 }
 
 function main() {
   initTheme();
-  initTasks();
-  initNotes();
-  initHttp();
-  initJsonFormatter();
-  initDb();
-  initRabbit();
-  initPomodoro();
-  setPomodoroRenderCallback(renderTasks);
+  if (runs("tasks")) initTasks();
+  if (runs("notes")) initNotes();
+  if (runs("http")) initHttp();
+  if (runs("json")) initJsonFormatter();
+  if (runs("db")) initDb();
+  if (runs("rabbit")) initRabbit();
   initSettings();
+  initSettingsSync();
+  if (!SOLO_APP) initNotesStorage();
   initWindowControls();
   initWindowMode();
-  initRescheduleModal();
   initGlobalShortcutListeners();
+  initDetach();
 
   load();
 }

@@ -36,6 +36,7 @@ import {
   closeRmqModal,
 } from "./rabbitDialogs.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
+import { registerApp } from "../appLifecycle.js";
 
 // Aba "RabbitMQ": monitoramento das filas de um host, operações de depuração (ver, republicar,
 // mover, purgar, excluir, fechar conexões) e gravação das mensagens trafegadas no rabbit.db.
@@ -76,7 +77,10 @@ const status = (id) => statuses.get(id) || { state: "idle" };
 let uiTimer = 0;
 function saveUi() {
   clearTimeout(uiTimer);
-  uiTimer = setTimeout(() => rabbitApi.saveMeta("ui", R.ui).catch(() => {}), 500);
+  uiTimer = setTimeout(() => {
+    uiTimer = 0;
+    rabbitApi.saveMeta("ui", R.ui).catch(() => {});
+  }, 500);
 }
 
 function saveConnections() {
@@ -1000,5 +1004,16 @@ export function initRabbit() {
     if (!R.loaded) return;
     renderAll();
     if (state.desktopMode && state.activeMainView === "rabbit") showCurrent(true);
+  });
+
+  registerApp("rabbit", {
+    flush: async () => {
+      if (!uiTimer) return;
+      clearTimeout(uiTimer);
+      uiTimer = 0;
+      await rabbitApi.saveMeta("ui", R.ui).catch(() => {});
+    },
+    // As gravações ativas continuam no Rust; loadRabbit reconecta os eventos nesta janela.
+    reload: () => loadRabbit(),
   });
 }

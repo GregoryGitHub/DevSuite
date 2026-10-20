@@ -1,12 +1,12 @@
 import { el, icon } from "../utils/dom.js";
-import { uid, target, affectedText } from "../utils/dbModel.js";
+import { uid, target, affectedText, connLabel, isMongo } from "../utils/dbModel.js";
 import { createDocState, docsToRows, cellEditText } from "../utils/mongoValue.js";
 import { codeEditor } from "./codeEditor.js";
 import { createDataGrid } from "./dataGrid.js";
 import { dbConfirm } from "./dbDialogs.js";
 import { createResultFooter, copyAsItems, exportMenuItems, txControls } from "./dbShared.js";
 import { languageFor } from "./dbLanguages.js";
-import { dbApi } from "../api.js";
+import { dbApi, saveFileDialogApi, writeFileApi } from "../api.js";
 
 // Console: Ctrl+Enter executa a seleção ou o comando sob o cursor; Ctrl+Shift+Enter executa
 // o script inteiro. Cada result set vira uma aba com um DataGrid. O que muda entre SQL e
@@ -449,10 +449,11 @@ export function createConsoleTab(ctx, tab, doc) {
   };
 }
 
-/** Aba somente leitura com o DDL/definição de um objeto. */
+/** Aba somente leitura com o DDL/definição de um objeto ou o script do banco inteiro (kind "database"). */
 export function createDdlTab(ctx, tab) {
   const conn = () => ctx.conn(tab.conn_id);
   const lang = languageFor(conn());
+  const whole = tab.kind === "database";
   const editor = codeEditor({ value: lang.id === "mongo" ? "// carregando…" : "-- carregando…", lang: lang.editorLang, fill: true, readOnly: true });
   const status = el("span.dbf-info");
   let loaded = false;
@@ -461,22 +462,66 @@ export function createDdlTab(ctx, tab) {
     {},
     el("button.dbt-btn", { type: "button", title: "Recarregar", onclick: () => load() }, icon("fa-solid fa-rotate-right")),
     el("button.dbt-btn", { type: "button", title: "Copiar", onclick: () => ctx.copy(editor.value, "DDL copiado") }, icon("fa-regular fa-copy"), el("span", {}, "Copiar")),
-    el("button.dbt-btn", { type: "button", title: "Abrir num console para editar/executar", onclick: () => ctx.openConsole(conn(), tab.database, editor.value) }, icon("fa-solid fa-terminal"), el("span", {}, "Abrir no console")),
+    el("button.dbt-btn", { type: "button", title: "Salvar num arquivo .sql", onclick: () => save() }, icon("fa-solid fa-download"), el("span", {}, "Salvar .sql…")),
+    el(
+      "button.dbt-btn",
+      { type: "button", title: whole ? "Abrir num console de outra conexão (ex.: o banco local)" : "Abrir num console para editar/executar", onclick: (e) => openInConsole(e.currentTarget) },
+      icon("fa-solid fa-terminal"),
+      el("span", {}, whole ? "Abrir no console de…" : "Abrir no console"),
+    ),
     el("span.hx-flex"),
     status,
   );
   const root = el("div.dbc", {}, toolbar, el("div.dbc-editor.full", {}, editor.root));
 
   async function load() {
-    status.textContent = "Carregando…";
+    loaded = true;
+    status.textContent = whole ? "Gerando script…" : "Carregando…";
+    const t0 = performance.now();
     try {
-      const sql = await dbApi.ddl(target(conn(), `meta:${tab.conn_id}:${tab.database}`, tab.database), { kind: tab.kind, schema: tab.schema, name: tab.name });
-      editor.setValue(sql);
-      status.textContent = "";
-      loaded = true;
+      const tgt = target(conn(), `meta:${tab.conn_id}:${tab.database}`, tab.database);
+      if (whole) {
+        const res = await dbApi.databaseScript(tgt, tab.options || {});
+        editor.setValue(res.sql);
+        const secs = ((performance.now() - t0) / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+        status.textContent = `${res.objects.toLocaleString("pt-BR")} objeto(s) · ${secs} s${res.warnings.length ? ` · ${res.warnings.length} aviso(s) no cabeçalho` : ""}`;
+      } else {
+        editor.setValue(await dbApi.ddl(tgt, { kind: tab.kind, schema: tab.schema, name: tab.name }));
+        status.textContent = "";
+      }
     } catch (e) {
       editor.setValue(`${lang.id === "mongo" ? "//" : "--"} ${String(e)}`);
       status.textContent = "Erro";
+    }
+  }
+
+  /**
+   * O script do banco serve para criar o banco em outro lugar: escolhe a conexão de destino
+   * (o console abre no banco padrão dela; o banco é trocado no seletor do console).
+   */
+  function openInConsole(anchor) {
+    if (!whole) return ctx.openConsole(conn(), tab.database, editor.value);
+    const items = ctx
+      .connections()
+      .filter((c) => !isMongo(c))
+      .map((c) => ({
+        label: `${connLabel(c)}${c.id === tab.conn_id ? " (origem)" : ""}`,
+        icon: c.id === tab.conn_id ? "fa-solid fa-triangle-exclamation" : "fa-solid fa-database",
+        run: () => ctx.openConsole(c, "", editor.value),
+      }));
+    ctx.showMenuBelow(anchor, items);
+  }
+
+  async function save() {
+    const base = (whole ? tab.database : `${tab.schema ? `${tab.schema}.` : ""}${tab.name}`).replace(/[\\/:*?"<>|]+/g, "_") || "ddl";
+    const ext = lang.id === "mongo" ? "js" : "sql";
+    const path = await saveFileDialogApi({ defaultPath: `${base}.${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }], title: "Salvar DDL" });
+    if (!path) return;
+    try {
+      await writeFileApi(path, { text: editor.value });
+      ctx.toast("Script salvo");
+    } catch (e) {
+      ctx.toast(`Falha ao salvar: ${e}`);
     }
   }
 

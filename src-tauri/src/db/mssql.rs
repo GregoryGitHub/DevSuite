@@ -43,7 +43,7 @@ async fn open(cfg: &ConnConfig, database: &str, secret: Secret) -> DbResult<Conn
     if !database.is_empty() {
         config.database(database);
     }
-    config.application_name("TodoRS");
+    config.application_name("Dev Suite");
     config.encryption(match cfg.encrypt.as_str() {
         "off" => EncryptionLevel::Off,
         "strict" => EncryptionLevel::Strict,
@@ -331,6 +331,10 @@ impl Session for MssqlSession {
 
     async fn table_schema(&mut self, schema: &str, name: &str) -> DbResult<TableSchema> {
         mssql_meta::table_schema(&mut self.client, schema, name).await
+    }
+
+    async fn database_script(&mut self, opts: &DbScriptOptions) -> DbResult<DbScript> {
+        mssql_meta::database_script(&mut self.client, opts).await
     }
 
     async fn begin(&mut self) -> DbResult<u32> {

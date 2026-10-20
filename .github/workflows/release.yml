@@ -44,7 +44,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "TodoRS ${{ github.ref_name }}"
-          releaseBody: "Confira as novidades e artefatos compilados para esta versão do TodoRS!"
+          releaseName: "Dev Suite ${{ github.ref_name }}"
+          releaseBody: "Confira as novidades e artefatos compilados para esta versão do Dev Suite!"
           releaseDraft: false
           prerelease: false

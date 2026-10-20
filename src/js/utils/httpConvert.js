@@ -394,7 +394,7 @@ export const SNIPPETS = [
 
 function isDefaultHeader(h) {
   return (
-    (h.key === "User-Agent" && h.value.startsWith("TodoRS-HTTP")) ||
+    (h.key === "User-Agent" && /^(DevSuite|TodoRS)-HTTP/.test(h.value)) ||
     (h.key === "Accept" && h.value === "*/*") ||
     (h.key === "Accept-Encoding" && h.value === "gzip, deflate, br")
   );

@@ -227,6 +227,13 @@ body.desktop-mode #view-http {
   color: var(--nt-yellow);
 }
 
+/* Largura fixa: pasta aberta/fechada têm larguras diferentes e o nome não deve pular. */
+.hx-folder-head > .fa-folder,
+.hx-folder-head > .fa-folder-open {
+  width: 16px;
+  text-align: center;
+}
+
 .hx-folder-head .hx-folder-caret {
   font-size: 9px;
   width: 10px;
@@ -275,8 +282,20 @@ body.desktop-mode #view-http {
   background: var(--nt-hover);
 }
 
-.hx-folder-head.drop-target {
+.hx-folder-head.drop-target,
+.hx-folder-empty.drop-target {
   box-shadow: inset 0 0 0 2px var(--nt-yellow);
+}
+
+/* Reordenar requisições/pastas: linha onde o item arrastado vai entrar. */
+.hx-folder-head.drop-before,
+.hx-item.drop-before {
+  box-shadow: inset 0 2px 0 var(--nt-yellow);
+}
+
+.hx-folder-head.drop-after,
+.hx-item.drop-after {
+  box-shadow: inset 0 -2px 0 var(--nt-yellow);
 }
 
 .hx-folder-head .nt-folder-input {
@@ -2363,4 +2382,13 @@ body.desktop-mode .nt-toolbar .hx-env-pill {
 
 .http-app .nt-tb-group {
   margin-left: 0;
+}
+
+/* Rodapé da lista (bandeja): "+" e "nova pasta" juntos à direita; colunas iguais mantêm a contagem centralizada. */
+.http-app .nt-list-footer {
+  grid-template-columns: 62px 1fr 62px;
+}
+
+.http-app .nt-list-footer .nt-tb-group {
+  justify-self: end;
 }

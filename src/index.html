@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Todo</title>
+    <title>Dev Suite</title>
     <!-- Google Fonts Poppins -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -73,40 +73,47 @@
 
       <!-- Main Content Views Container -->
       <div class="views-container">
-        <!-- VIEW 1: TASKS (bandeja = lista + detalhe em pilha; desktop = listas | tarefas | detalhe) -->
+        <!-- VIEW 1: TASKS — board kanban (bandeja = abas de coluna + detalhe em pilha; desktop = boards | colunas | detalhe) -->
         <div id="view-tasks" class="view-panel active">
           <div id="tasks-app" class="notes-app tasks-app" data-pane="list">
             <!-- Desktop: barra de ferramentas unificada -->
             <header class="nt-toolbar desktop-only" data-tauri-drag-region>
               <div class="nt-tb-sidebar" data-tauri-drag-region>
                 <div class="app-switch"></div>
-                <button class="nt-tb-btn" data-action="toggle-sidebar" title="Mostrar/ocultar listas">
+                <button class="nt-tb-btn" data-action="toggle-sidebar" title="Mostrar/ocultar boards">
                   <i class="fa-solid fa-table-columns"></i>
                 </button>
               </div>
               <div class="nt-tb-editor" data-tauri-drag-region>
                 <div class="nt-tb-title" data-tauri-drag-region>
-                  <strong id="tk-tb-title">Meu Dia</strong>
-                  <span id="tk-tb-count">0 pendentes</span>
+                  <strong id="kb-tb-title">Tarefas</strong>
+                  <span id="kb-tb-count"></span>
                 </div>
                 <div class="nt-tb-group">
-                  <button class="nt-tb-btn" data-action="new-task" title="Nova tarefa (Ctrl+N)">
+                  <button class="nt-tb-btn" data-action="new-card" title="Novo card na primeira coluna (Ctrl+N)">
                     <i class="fa-solid fa-plus"></i>
                   </button>
-                  <button class="nt-tb-btn" data-action="reschedule" title="Mover pendentes para outra data">
-                    <i class="fa-solid fa-calendar-plus"></i>
+                  <button class="nt-tb-btn" data-action="new-column" title="Nova coluna">
+                    <i class="fa-solid fa-square-plus"></i>
+                  </button>
+                  <button class="nt-tb-btn" data-action="archived" title="Arquivados do board">
+                    <i class="fa-solid fa-box-archive"></i>
                   </button>
                 </div>
+                <div id="kb-filters" class="kb-filters"></div>
                 <div class="nt-tb-spacer" data-tauri-drag-region></div>
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
                 </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
                 </button>
                 <label class="nt-search">
                   <i class="fa-solid fa-magnifying-glass"></i>
-                  <input id="tk-search" type="search" placeholder="Buscar tarefas" autocomplete="off" />
+                  <input id="kb-search" type="search" placeholder="Buscar cards" autocomplete="off" />
                 </label>
                 <div class="win-caption">
                   <button class="win-btn" data-action="minimize" title="Minimizar">
@@ -124,49 +131,42 @@
             </header>
 
             <div class="nt-body">
-              <!-- Listas (só no desktop; na bandeja vira o seletor segmentado) -->
+              <!-- Boards (só no desktop; na bandeja vira o seletor do topo) -->
               <aside class="nt-sidebar desktop-only">
                 <div class="nt-sidebar-scroll">
-                  <div class="nt-section-label">Tarefas</div>
-                  <ul id="tk-scopes" class="nt-folders"></ul>
+                  <div class="nt-section-label">Boards</div>
+                  <ul id="kb-boards" class="nt-folders"></ul>
                 </div>
+                <button class="nt-new-folder" data-action="new-board"><i class="fa-solid fa-plus"></i> Novo board</button>
               </aside>
 
-              <!-- Lista de tarefas -->
-              <section class="nt-list-pane tk-list-pane">
-                <div class="tk-head">
-                  <div class="tk-head-text">
-                    <h2 class="tk-title"><i id="tk-title-icon" class="fa-solid fa-sun"></i><span id="tk-title-text">Meu Dia</span></h2>
-                    <span id="tk-subtitle" class="tk-subtitle"></span>
-                  </div>
-                  <div class="nt-nav-actions compact-only">
-                    <button class="nt-icon-btn" data-action="reschedule" title="Mover pendentes para outra data">
-                      <i class="fa-solid fa-calendar-plus"></i>
+              <!-- Board -->
+              <section class="nt-list-pane kb-main">
+                <div class="kb-head compact-only">
+                  <button id="kb-board-pick" class="kb-board-pick" type="button" title="Trocar de board">
+                    <span id="kb-board-name">Tarefas</span><i class="fa-solid fa-chevron-down"></i>
+                  </button>
+                  <div class="nt-nav-actions">
+                    <button class="nt-icon-btn" data-action="archived" title="Arquivados do board">
+                      <i class="fa-solid fa-box-archive"></i>
                     </button>
                     <button class="nt-icon-btn" data-action="desktop" title="Abrir no modo desktop">
                       <i class="fa-solid fa-up-right-and-down-left-from-center"></i>
                     </button>
                   </div>
                 </div>
-                <div id="tk-seg" class="tk-seg compact-only"></div>
-                <form id="new-todo" class="tk-add" autocomplete="off">
-                  <span class="tk-add-icon"><i class="fa-solid fa-plus"></i></span>
-                  <input id="input" type="text" placeholder="Adicionar uma tarefa" maxlength="200" />
-                  <button type="submit" class="tk-add-btn" title="Adicionar (Enter)" aria-label="Adicionar">
-                    <i class="fa-solid fa-arrow-up"></i>
-                  </button>
-                </form>
-                <div id="tk-list" class="nt-list tk-list" tabindex="0"></div>
+                <div id="kb-seg" class="tk-seg kb-seg compact-only"></div>
+                <div id="kb-board" class="kb-board" tabindex="0"></div>
               </section>
 
-              <!-- Detalhe da tarefa -->
+              <!-- Detalhe do card -->
               <section class="nt-editor-pane tk-detail-pane">
                 <div class="nt-nav compact-only">
                   <button class="nt-back" data-action="show-list">
-                    <i class="fa-solid fa-chevron-left"></i> <span id="tk-back-label">Meu Dia</span>
+                    <i class="fa-solid fa-chevron-left"></i> <span id="kb-back-label">Board</span>
                   </button>
                   <div class="nt-nav-actions">
-                    <button class="nt-icon-btn" data-action="delete" title="Excluir tarefa">
+                    <button class="nt-icon-btn" data-action="delete" title="Excluir card">
                       <i class="fa-regular fa-trash-can"></i>
                     </button>
                   </div>
@@ -174,6 +174,10 @@
                 <div id="tk-detail" class="tk-detail"></div>
               </section>
             </div>
+
+            <!-- Barra de foco do Pomodoro (aparece com uma sessão ativa) -->
+            <div id="kb-focusbar" class="kb-focusbar" hidden></div>
+            <div id="kb-menu" class="nt-menu" hidden></div>
           </div>
         </div>
 
@@ -223,6 +227,9 @@
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
                 </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
+                </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
                 </button>
@@ -258,7 +265,14 @@
                 <h2 class="nt-large-title compact-only">Pastas</h2>
                 <div class="nt-sidebar-scroll">
                   <div class="nt-section-label nt-section-head">
-                    <span>No Meu PC</span>
+                    <button type="button" class="nt-storage-switch" data-action="storage-menu" title="Trocar de cofre">
+                      <i class="fa-solid fa-hard-drive" id="nt-storage-icon"></i>
+                      <span id="nt-storage-label">No Meu PC</span>
+                      <i class="fa-solid fa-chevron-down"></i>
+                    </button>
+                    <button class="nt-section-btn" data-action="vault-refresh" title="Atualizar do cofre (alterações feitas por outras pessoas)" hidden>
+                      <i class="fa-solid fa-rotate"></i>
+                    </button>
                     <button class="nt-section-btn" data-action="import-folder" title="Importar pasta de Markdown (com subpastas)">
                       <i class="fa-solid fa-file-import"></i>
                     </button>
@@ -409,9 +423,14 @@
                   <strong id="hx-tb-scope">Coleção</strong>
                   <span id="hx-tb-count">0 requisições</span>
                 </div>
-                <button class="nt-tb-btn" data-action="new-request" title="Nova requisição (Ctrl+N)">
-                  <i class="fa-solid fa-plus"></i>
-                </button>
+                <div class="nt-tb-group">
+                  <button class="nt-tb-btn" data-action="new-request" title="Nova requisição (Ctrl+N)">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                  <button class="nt-tb-btn" data-action="new-http-folder" title="Nova pasta na coleção">
+                    <i class="fa-solid fa-folder-plus"></i>
+                  </button>
+                </div>
               </div>
               <div class="nt-tb-editor" data-tauri-drag-region>
                 <button class="hx-env-pill" data-action="env-menu" title="Ambiente ativo">
@@ -426,6 +445,9 @@
                 <div class="nt-tb-spacer" data-tauri-drag-region></div>
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
                 </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
@@ -503,9 +525,14 @@
                     <i class="fa-solid fa-ellipsis"></i>
                   </button>
                   <span id="hx-count" class="nt-count">0 requisições</span>
-                  <button class="nt-icon-btn accent" data-action="new-request" title="Nova requisição">
-                    <i class="fa-solid fa-plus"></i>
-                  </button>
+                  <div class="nt-tb-group">
+                    <button class="nt-icon-btn accent" data-action="new-request" title="Nova requisição">
+                      <i class="fa-solid fa-plus"></i>
+                    </button>
+                    <button class="nt-icon-btn accent" data-action="new-http-folder" title="Nova pasta na coleção">
+                      <i class="fa-solid fa-folder-plus"></i>
+                    </button>
+                  </div>
                 </div>
               </section>
 
@@ -595,6 +622,9 @@
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
                 </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
+                </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
                 </button>
@@ -683,6 +713,9 @@
                 <div class="nt-tb-spacer" data-tauri-drag-region></div>
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
                 </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
@@ -784,6 +817,9 @@
                 <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
                   <i class="fa-solid fa-moon"></i>
                 </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
+                </button>
                 <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
                   <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
                 </button>
@@ -841,7 +877,39 @@
 
         <!-- VIEW 5: SETTINGS -->
         <div id="view-settings" class="view-panel" hidden>
-          <header class="app-header">
+          <!-- Desktop: barra de ferramentas unificada (como as outras abas) -->
+          <div id="settings-bar" class="notes-app settings-bar desktop-only">
+            <header class="nt-toolbar" data-tauri-drag-region>
+              <div class="nt-tb-editor settings-toolbar" data-tauri-drag-region>
+                <div class="app-switch"></div>
+                <div class="nt-tb-title" data-tauri-drag-region>
+                  <strong>Configurações</strong>
+                  <span>Aparência, inicialização e armazenamento das notas</span>
+                </div>
+                <div class="nt-tb-spacer" data-tauri-drag-region></div>
+                <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
+                  <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
+                  <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
+                </button>
+                <div class="win-caption">
+                  <button class="win-btn" data-action="minimize" title="Minimizar">
+                    <svg viewBox="0 0 10 10"><path d="M0 5.5h10" /></svg>
+                  </button>
+                  <button class="win-btn" data-action="maximize" title="Maximizar / Restaurar">
+                    <svg class="ic-max" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1" /></svg>
+                    <svg class="ic-restore" viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="7" height="7" rx="1" /><path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" /></svg>
+                  </button>
+                  <button class="win-btn win-close" data-action="close-desktop" title="Fechar (volta para a bandeja)">
+                    <svg viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
+                  </button>
+                </div>
+              </div>
+            </header>
+          </div>
+
+          <header class="app-header compact-only">
             <div class="header-title">
               <h1>
                 <i class="fa-solid fa-gear"></i> Configurações
@@ -894,6 +962,38 @@
                 <span class="slider"></span>
               </label>
             </div>
+
+            <div class="setting-item">
+              <div class="setting-info">
+                <span class="setting-title">Notas: onde guardar</span>
+                <span class="setting-desc">Banco local (padrão) ou um cofre: pasta de arquivos Markdown, como o Obsidian (pode ser uma pasta de rede).</span>
+              </div>
+              <div id="setting-notes-storage" class="theme-seg">
+                <button type="button" data-storage="sqlite" title="Banco local (notes.db)"><i class="fa-solid fa-database"></i></button>
+                <button type="button" data-storage="vault" title="Cofre (pasta de Markdown)"><i class="fa-solid fa-folder-open"></i></button>
+              </div>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info setting-info-grow">
+                <span class="setting-title">Pasta do cofre</span>
+                <span id="setting-vault-path" class="setting-desc setting-path"></span>
+                <ul id="setting-vault-list" class="setting-vault-list"></ul>
+                <span id="setting-vault-status" class="setting-desc setting-status" hidden></span>
+              </div>
+              <button type="button" id="setting-vault-pick" class="setting-btn">Escolher…</button>
+            </div>
+
+            <div class="setting-item" id="setting-vault-copy-row">
+              <div class="setting-info">
+                <span class="setting-title">Copiar notas ao ativar o cofre</span>
+                <span class="setting-desc">Leva as notas e pastas do banco local para o cofre (o banco local continua intacto).</span>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="setting-vault-copy" />
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -922,85 +1022,6 @@
           <i class="fa-solid fa-gear"></i>
         </button>
       </nav>
-
-      <!-- Reschedule Modal -->
-      <div id="modal-reschedule" class="modal-overlay" hidden>
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>
-              <i class="fa-solid fa-calendar-days"></i> Mover Tarefas
-            </h3>
-            <button id="modal-close" class="btn-icon" aria-label="Fechar">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-          <div class="modal-body">
-            <p class="modal-desc">
-              Escolha a data para mover todas as tarefas pendentes:
-            </p>
-            <div class="date-picker-container">
-              <label for="reschedule-date">Data de destino:</label>
-              <input type="date" id="reschedule-date" class="date-input" />
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button id="btn-cancel-reschedule" class="btn-flat">Cancelar</button>
-            <button id="btn-confirm-reschedule" class="btn-primary">
-              <i class="fa-solid fa-check"></i> Confirmar
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pomodoro Modal -->
-      <div id="modal-pomodoro" class="modal-overlay" hidden>
-        <div class="modal-content pomodoro-modal-content">
-          <div class="modal-header">
-            <h3>
-              <i class="fa-solid fa-stopwatch"></i> Timer Pomodoro
-            </h3>
-            <button id="pomodoro-modal-close" class="btn-icon" aria-label="Fechar">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-          <div class="modal-body pomodoro-body">
-            <p id="pomodoro-task-name" class="pomodoro-task-title">Nome da Tarefa</p>
-            
-            <div id="pomodoro-mode-badge" class="pomo-mode-badge work">
-              <i id="pomo-badge-icon" class="fa-solid fa-brain"></i>
-              <span id="pomo-badge-text">Foco</span>
-            </div>
-
-            <!-- Big Timer Counter -->
-            <div class="pomodoro-timer-display">
-              <span id="pomodoro-time-display">25:00</span>
-            </div>
-
-            <!-- Controls: Start/Pause, Reset -->
-            <div class="pomodoro-controls">
-              <button id="btn-pomo-toggle" class="btn-primary btn-pomo-main">
-                <i id="pomo-toggle-icon" class="fa-solid fa-play"></i>
-                <span id="pomo-toggle-text">Iniciar</span>
-              </button>
-              <button id="btn-pomo-reset" class="btn-secondary" title="Reiniciar Timer">
-                <i class="fa-solid fa-rotate-left"></i>
-              </button>
-            </div>
-
-            <!-- Quick Settings -->
-            <div class="pomodoro-settings">
-              <div class="pomo-input-group">
-                <label for="pomo-work-input">Foco (min)</label>
-                <input type="number" id="pomo-work-input" min="1" max="120" value="25" class="pomo-num-input" />
-              </div>
-              <div class="pomo-input-group">
-                <label for="pomo-break-input">Pausa (min)</label>
-                <input type="number" id="pomo-break-input" min="1" max="60" value="5" class="pomo-num-input" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
     </main>
     <script type="module" src="main.js"></script>

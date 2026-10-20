@@ -15,14 +15,15 @@ import {
   affectedText,
 } from "../utils/dbModel.js";
 import { dialectFor } from "../utils/sqlDialect.js";
-import { saveDbDataApi, dbApi } from "../api.js";
+import { saveDbDataApi, loadDbDataApi, dbApi } from "../api.js";
+import { registerApp } from "../appLifecycle.js";
 import { createExplorer } from "./dbExplorer.js";
 import { createTableTab } from "./dbTableTab.js";
 import { createMongoTab } from "./dbMongoTab.js";
 import { createConsoleTab, createDdlTab } from "./dbConsole.js";
 import { connectionDialog, dbConfirm, isDbModalOpen, closeDbModal, sqlPreviewDialog } from "./dbDialogs.js";
 import { attachWordComplete } from "./sqlComplete.js";
-import { tableDesigner, ddlActionDialog, quickSchemaAction } from "./dbSchema.js";
+import { tableDesigner, ddlActionDialog, quickSchemaAction, databaseScriptDialog } from "./dbSchema.js";
 import { renameObjectSql, dropObjectSql, truncateSql, renameColumnRefs, dropColumn } from "../utils/sqlDdl.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
 
@@ -63,11 +64,15 @@ let logEntries = [];
 let saveTimer = 0;
 function saveDataSoon() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => saveDbDataApi(data()), 600);
+  saveTimer = setTimeout(() => {
+    saveTimer = 0;
+    saveDbDataApi(data());
+  }, 600);
 }
 
 function saveNow() {
   clearTimeout(saveTimer);
+  saveTimer = 0;
   saveDbDataApi(data());
 }
 
@@ -368,6 +373,7 @@ function tabTitle(t) {
     const doc = data().consoles.find((x) => x.id === t.console_id);
     return { title: doc?.name || "console", where: `${where}${doc?.database ? `/${doc.database}` : ""}`, icon: "fa-solid fa-terminal" };
   }
+  if (t.type === "ddl" && t.kind === "database") return { title: `DDL ${t.name}`, where, icon: "fa-solid fa-scroll" };
   if (t.type === "ddl") return { title: t.name, where, icon: "fa-solid fa-code" };
   if (t.kind === "collection") return { title: t.name, where: `${where}/${t.database}`, icon: "fa-solid fa-layer-group" };
   return { title: t.name, where, icon: t.kind === "view" ? "fa-solid fa-eye" : "fa-solid fa-table" };
@@ -446,6 +452,7 @@ const tabCtx = {
   copy,
   showMenu,
   showMenuBelow,
+  connections: () => data().connections,
   saveUi: saveDataSoon,
   saveDataSoon,
   pageSize: () => data().ui.page_size,
@@ -533,11 +540,19 @@ function openTable({ conn: c, database, schema, name, kind = "table", where = ""
   addTab(newTab({ type: "table", conn_id: c.id, database, schema, name, kind, where }));
 }
 
-function openDdl({ conn: c, database, schema, name, kind }) {
+function openDdl({ conn: c, database, schema, name, kind, options = null }) {
   if (!c) return;
-  const existing = data().ui.tabs.find((t) => t.type === "ddl" && t.conn_id === c.id && t.database === database && t.schema === schema && t.name === name);
-  if (existing) return showTab(existing.id);
-  addTab(newTab({ type: "ddl", conn_id: c.id, database, schema, name, kind }));
+  const existing = data().ui.tabs.find((t) => t.type === "ddl" && t.conn_id === c.id && t.database === database && t.schema === schema && t.name === name && (t.kind === "database") === (kind === "database"));
+  if (existing) {
+    // Script do banco pedido de novo (com outras opções): regera na mesma aba.
+    if (options) {
+      existing.options = options;
+      saveDataSoon();
+      controllers.get(existing.id)?.refresh();
+    }
+    return showTab(existing.id);
+  }
+  addTab(newTab({ type: "ddl", conn_id: c.id, database, schema, name, kind, options }));
 }
 
 function openConsole(c, database, sql = "") {
@@ -699,11 +714,13 @@ const schemaCtx = {
   completions,
   attachColumnComplete: attachWordComplete,
   afterDdl,
+  openDatabaseScript: ({ conn: c, database, options }) => openDdl({ conn: c, database, schema: "", name: database, kind: "database", options }),
 };
 
 const schemaActions = {
   modify: (ref, focus = {}) => tableDesigner(schemaCtx, { conn: ref.conn, database: ref.database, schema: ref.schema, name: ref.name, focus }),
   newTable: ({ conn: c, database, schema }) => tableDesigner(schemaCtx, { conn: c, database, schema }),
+  databaseScript: ({ conn: c, database, schema }) => databaseScriptDialog(schemaCtx, { conn: c, database, schema }),
 
   rename(ref) {
     ddlActionDialog(schemaCtx, {
@@ -938,6 +955,7 @@ function onKeydown(e) {
 export function setDbData(raw) {
   state.db = normalizeDbData(raw);
   applyLayout();
+  explorer?.destroy();
   explorer = createExplorer(
     {
       data,
@@ -960,6 +978,7 @@ export function setDbData(raw) {
       copy,
       toast,
       saveUi: saveDataSoon,
+      onConnectionsReordered: renderCompact,
     },
     { treeEl, searchEl: document.getElementById("db-tree-search") },
   );
@@ -992,5 +1011,24 @@ export function initDb() {
     if (!state.db) return;
     renderAll();
     if (state.desktopMode && state.activeMainView === "db" && activeTab()) showTab(activeTab().id);
+  });
+
+  registerApp("db", {
+    flush: async () => {
+      if (!saveTimer) return;
+      clearTimeout(saveTimer);
+      saveTimer = 0;
+      await saveDbDataApi(data());
+    },
+    reload: async () => {
+      // As sessões (tab:/console:/meta:) continuam no Rust: só a interface é recriada, sem
+      // dispose() (que desconectaria e perderia transações abertas).
+      for (const ctl of controllers.values()) ctl.root?.remove();
+      controllers.clear();
+      tabFlags.clear();
+      setDbData(await loadDbDataApi());
+    },
+    blocker: () =>
+      [...tabFlags.values()].some((f) => f.running) ? "Há consultas em andamento no Banco. Espere terminar ou cancele antes de mover." : null,
   });
 }

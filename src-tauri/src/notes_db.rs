@@ -26,9 +26,25 @@ use tauri::Manager;
 const TRASH_RETENTION_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 const PREVIEW_CHARS: usize = 240;
 
-/// Conexão aberta no primeiro uso (comandos rodam fora da thread da UI).
+/// Onde as notas ficam: banco local (padrão) ou cofre (pasta de Markdown).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Storage {
+    Sqlite,
+    Vault(PathBuf),
+}
+
+pub enum Backend {
+    Sqlite(Connection),
+    Vault(crate::notes_vault::Vault),
+}
+
+/// Backend aberto no primeiro uso (comandos rodam fora da thread da UI). `storage` = None
+/// até ser lido do settings.json ou definido por `notes_set_storage`.
 #[derive(Default)]
-pub struct NotesDb(Mutex<Option<Connection>>);
+pub struct NotesDb {
+    backend: Mutex<Option<Backend>>,
+    storage: Mutex<Option<Storage>>,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct NoteMeta {
@@ -56,6 +72,15 @@ pub struct NoteMeta {
     /// Links `[[ ]]` da nota: ids (número) ou títulos ainda sem nota (texto).
     #[serde(default)]
     pub links: Vec<serde_json::Value>,
+    /// Cofre: front-matter YAML cru (o JS converte em `props`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front_matter: Option<String>,
+    /// Cofre: mtime do arquivo na última leitura/gravação (detecta edição de outra pessoa).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_mtime: Option<u64>,
+    /// Cofre: caminho do arquivo relativo ao cofre ("pasta/Título.md").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel: Option<String>,
 }
 
 /// Nota completa enviada pelo JS ao salvar/importar.
@@ -71,6 +96,9 @@ pub struct NoteSave {
     /// Nomes dos arquivos em note-images/ usados pela nota (limpeza de órfãos).
     #[serde(default)]
     pub images: Vec<String>,
+    /// Cofre: o arquivo .md inteiro (front-matter + corpo), gerado pelo JS.
+    #[serde(default)]
+    pub markdown: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -193,6 +221,7 @@ fn meta_row(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
             serde_json::Value::Array(a) => a,
             _ => Vec::new(),
         },
+        ..Default::default()
     })
 }
 
@@ -379,68 +408,195 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Roda `f` com a conexão numa thread de bloqueio (nunca na thread da interface).
-async fn with_db<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
+/// Armazenamento escolhido nas configurações (`notes_storage` / `vault_path` do settings.json).
+fn storage_from_settings(dir: &Path) -> Storage {
+    let v: serde_json::Value = fs::read_to_string(dir.join("settings.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let path = v["vault_path"].as_str().unwrap_or("").trim();
+    if v["notes_storage"].as_str() == Some("vault") && !path.is_empty() {
+        Storage::Vault(PathBuf::from(path))
+    } else {
+        Storage::Sqlite
+    }
+}
+
+fn open_backend(dir: &Path, storage: &Storage) -> Result<Backend, String> {
+    match storage {
+        Storage::Sqlite => {
+            let conn = open(&dir.join("notes.db")).map_err(|e| format!("Falha ao abrir notes.db: {e}"))?;
+            crate::note_images::set_vault_root(None);
+            Ok(Backend::Sqlite(conn))
+        }
+        Storage::Vault(root) => {
+            let vault = crate::notes_vault::Vault::open(root, &crate::notes_vault::index_path(dir, root))?;
+            crate::note_images::set_vault_root(Some(root.clone()));
+            Ok(Backend::Vault(vault))
+        }
+    }
+}
+
+/// Roda `f` com o backend numa thread de bloqueio (nunca na thread da interface). Se o
+/// cofre estiver indisponível (rede fora), o erro volta e a próxima chamada tenta de novo.
+async fn with_backend<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&mut Connection) -> rusqlite::Result<T> + Send + 'static,
+    F: FnOnce(&mut Backend) -> Result<T, String> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<NotesDb>();
-        let mut guard = state.0.lock().map_err(|_| "banco de notas indisponível".to_string())?;
+        let mut guard = state.backend.lock().map_err(|_| "banco de notas indisponível".to_string())?;
         if guard.is_none() {
-            let path = data_dir(&app)?.join("notes.db");
-            *guard = Some(open(&path).map_err(|e| format!("Falha ao abrir notes.db: {e}"))?);
+            let dir = data_dir(&app)?;
+            let storage = {
+                let mut s = state.storage.lock().map_err(|_| "banco de notas indisponível".to_string())?;
+                s.get_or_insert_with(|| storage_from_settings(&dir)).clone()
+            };
+            *guard = Some(open_backend(&dir, &storage)?);
         }
-        f(guard.as_mut().unwrap()).map_err(|e| e.to_string())
+        f(guard.as_mut().unwrap())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+fn db<T>(r: rusqlite::Result<T>) -> Result<T, String> {
+    r.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn notes_list(app: tauri::AppHandle) -> Result<Vec<NoteMeta>, String> {
-    with_db(app, |c| list(c, now_ms())).await
+    with_backend(app, |b| match b {
+        Backend::Sqlite(c) => db(list(c, now_ms())),
+        Backend::Vault(v) => v.list(now_ms()),
+    })
+    .await
+}
+
+/// SQLite: o HTML (string). Cofre: `{ markdown, rel, mtime }` (o JS converte).
+#[tauri::command]
+pub async fn notes_get(app: tauri::AppHandle, id: u64) -> Result<serde_json::Value, String> {
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => Ok(db(get_content(c, id))?.map(serde_json::Value::String).unwrap_or_default()),
+        Backend::Vault(v) => Ok(v.get(id)?.map(|c| serde_json::to_value(c).unwrap_or_default()).unwrap_or_default()),
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn notes_get(app: tauri::AppHandle, id: u64) -> Result<Option<String>, String> {
-    with_db(app, move |c| get_content(c, id)).await
-}
-
-#[tauri::command]
-pub async fn notes_save(app: tauri::AppHandle, note: NoteSave) -> Result<(), String> {
-    with_db(app, move |c| save(c, &note)).await
+pub async fn notes_save(app: tauri::AppHandle, note: NoteSave) -> Result<crate::notes_vault::SaveResult, String> {
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(save(c, &note)).map(|_| Default::default()),
+        Backend::Vault(v) => v.save(&note),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_save_many(app: tauri::AppHandle, notes: Vec<NoteSave>) -> Result<(), String> {
-    with_db(app, move |c| save_many(c, &notes)).await
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(save_many(c, &notes)),
+        Backend::Vault(v) => notes.iter().try_for_each(|n| v.save(n).map(|_| ())),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_set_meta(app: tauri::AppHandle, notes: Vec<NoteMeta>) -> Result<(), String> {
-    with_db(app, move |c| set_meta(c, &notes)).await
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(set_meta(c, &notes)),
+        Backend::Vault(v) => v.set_meta(&notes),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_delete(app: tauri::AppHandle, ids: Vec<u64>) -> Result<(), String> {
-    with_db(app, move |c| delete(c, &ids)).await
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(delete(c, &ids)),
+        Backend::Vault(v) => v.delete(&ids),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_search(app: tauri::AppHandle, query: String) -> Result<Vec<u64>, String> {
-    with_db(app, move |c| search(c, &query)).await
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(search(c, &query)),
+        Backend::Vault(v) => v.search(&query),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_folders(app: tauri::AppHandle) -> Result<Vec<Folder>, String> {
-    with_db(app, |c| folders(c)).await
+    with_backend(app, |b| match b {
+        Backend::Sqlite(c) => db(folders(c)),
+        Backend::Vault(v) => v.folders(),
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn notes_save_folders(app: tauri::AppHandle, folders: Vec<Folder>) -> Result<(), String> {
-    with_db(app, move |c| save_folders(c, &folders)).await
+    with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(save_folders(c, &folders)),
+        Backend::Vault(v) => v.save_folders(&folders),
+    })
+    .await
+}
+
+/// Troca o armazenamento ("sqlite" | "vault" + pasta). Abre o novo na hora: se o cofre não
+/// puder ser aberto, devolve o erro e continua no anterior.
+#[tauri::command]
+pub async fn notes_set_storage(app: tauri::AppHandle, mode: String, path: Option<String>) -> Result<(), String> {
+    let storage = match (mode.as_str(), path.as_deref().map(str::trim)) {
+        ("vault", Some(p)) if !p.is_empty() => Storage::Vault(PathBuf::from(p)),
+        ("vault", _) => return Err("Escolha a pasta do cofre.".into()),
+        _ => Storage::Sqlite,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<NotesDb>();
+        let mut guard = state.backend.lock().map_err(|_| "banco de notas indisponível".to_string())?;
+        let backend = match open_backend(&data_dir(&app)?, &storage) {
+            Ok(b) => b,
+            Err(e) => {
+                // As imagens continuam apontando para o armazenamento que segue aberto.
+                let root = match guard.as_ref() {
+                    Some(Backend::Vault(v)) => Some(v.root.clone()),
+                    _ => None,
+                };
+                crate::note_images::set_vault_root(root);
+                return Err(e);
+            }
+        };
+        *guard = Some(backend);
+        *state.storage.lock().map_err(|_| "banco de notas indisponível".to_string())? = Some(storage);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Cofre: relê o que mudou no disco (outros usuários/apps). SQLite: nada muda.
+#[tauri::command]
+pub async fn notes_vault_refresh(app: tauri::AppHandle) -> Result<crate::notes_vault::ScanDiff, String> {
+    with_backend(app, |b| match b {
+        Backend::Sqlite(_) => Ok(Default::default()),
+        Backend::Vault(v) => v.scan(),
+    })
+    .await
+}
+
+/// Cofre: arquivos que não são notas (imagens/anexos), relativos ao cofre.
+#[tauri::command]
+pub async fn notes_vault_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    with_backend(app, |b| match b {
+        Backend::Sqlite(_) => Ok(Vec::new()),
+        Backend::Vault(v) => v.files(),
+    })
+    .await
 }
 
 /// JSON antigos ainda não importados (None se já importados ou se não existem).
@@ -448,14 +604,15 @@ pub async fn notes_save_folders(app: tauri::AppHandle, folders: Vec<Folder>) -> 
 #[tauri::command]
 pub async fn notes_legacy(app: tauri::AppHandle) -> Result<Option<Legacy>, String> {
     let dir = data_dir(&app)?;
-    with_db(app, move |c| {
-        if is_migrated(c)? {
+    with_backend(app, move |b| {
+        let Backend::Sqlite(c) = b else { return Ok(Ok(None)) };
+        if db(is_migrated(c))? {
             return Ok(Ok(None));
         }
         let notes_path = dir.join("notes.json");
         let folders_path = dir.join("folders.json");
         if !notes_path.exists() && !folders_path.exists() {
-            mark_migrated(c)?;
+            db(mark_migrated(c))?;
             return Ok(Ok(None));
         }
         let notes = match fs::read_to_string(&notes_path) {
@@ -478,7 +635,11 @@ pub async fn notes_legacy(app: tauri::AppHandle) -> Result<Option<Legacy>, Strin
 #[tauri::command]
 pub async fn notes_import(app: tauri::AppHandle, notes: Vec<NoteSave>, folders: Vec<Folder>) -> Result<usize, String> {
     let dir = data_dir(&app)?;
-    let added = with_db(app, move |c| import(c, &notes, &folders)).await?;
+    let added = with_backend(app, move |b| match b {
+        Backend::Sqlite(c) => db(import(c, &notes, &folders)),
+        Backend::Vault(_) => Err("A importação dos JSON antigos só acontece no banco local.".into()),
+    })
+    .await?;
     for name in ["notes.json", "folders.json"] {
         let path = dir.join(name);
         if path.exists() {
@@ -590,12 +751,17 @@ pub async fn notes_scan_dir(dir: String) -> Result<DirScan, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Apaga imagens que nenhuma nota usa (lista de nomes vem do banco).
+/// Apaga imagens que nenhuma nota usa (lista de nomes vem do banco). No cofre nada é
+/// apagado: a pasta pode ser compartilhada e as imagens podem ser usadas por outros apps.
 #[tauri::command]
 pub async fn notes_gc_images(app: tauri::AppHandle) -> Result<u32, String> {
-    let (count, keep) = with_db(app.clone(), |c| image_names(c)).await?;
+    let (count, keep) = with_backend(app.clone(), |b| match b {
+        Backend::Sqlite(c) => db(image_names(c)),
+        Backend::Vault(_) => Ok((0, HashSet::new())),
+    })
+    .await?;
     if count == 0 {
-        return Ok(0); // banco vazio (importação pendente?): não arrisca apagar nada
+        return Ok(0); // banco vazio (importação pendente?) ou cofre: não arrisca apagar nada
     }
     tauri::async_runtime::spawn_blocking(move || crate::note_images::gc_note_images(&app, &keep))
         .await
@@ -618,6 +784,7 @@ mod tests {
             content: format!("<p>{plain}</p>"),
             plain: plain.into(),
             images: vec![],
+            ..Default::default()
         }
     }
 

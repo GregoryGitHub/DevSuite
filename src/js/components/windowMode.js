@@ -1,6 +1,8 @@
 import { state } from "../state.js";
 import { setDesktopModeApi, minimizeWindowApi, toggleMaximizeApi } from "../api.js";
 import { showMainView } from "../navigation.js";
+import { SOLO_APP, isSolo } from "../windowContext.js";
+import { reattachSelf } from "./detach.js";
 
 // Tray mode (compact window by the tray) <-> desktop mode (large Tasks/Notes/HTTP/JSON/DB/RabbitMQ window).
 
@@ -12,6 +14,7 @@ const DESKTOP_VIEWS = [
   { view: "json", title: "Formatter JSON", icon: "fa-solid fa-code" },
   { view: "db", title: "Banco de dados", icon: "fa-solid fa-database" },
   { view: "rabbit", title: "RabbitMQ", icon: "fa-solid fa-envelopes-bulk" },
+  { view: "settings", title: "Configurações", icon: "fa-solid fa-gear" },
 ];
 
 function notifyChange() {
@@ -26,9 +29,9 @@ function updateMaximizedClass() {
   document.body.classList.toggle("maximized", maximized);
 }
 
-/** Opens the large window on the current view (Settings falls back to Tasks). */
+/** Opens the large window on the current view. */
 export async function enterDesktopMode() {
-  if (state.desktopMode) return;
+  if (state.desktopMode || isSolo) return;
   state.desktopMode = true;
   document.body.classList.add("desktop-mode");
   showMainView(DESKTOP_VIEWS.some((v) => v.view === state.activeMainView) ? state.activeMainView : "tasks");
@@ -38,6 +41,8 @@ export async function enterDesktopMode() {
 
 /** Back to the compact tray window; `visible: false` also hides it (red button). */
 export async function exitDesktopMode({ visible = true } = {}) {
+  // Janela desatachada: fechar devolve o app à janela principal.
+  if (isSolo) return reattachSelf();
   if (!state.desktopMode) return;
   state.desktopMode = false;
   await setDesktopModeApi(false, visible);
@@ -61,6 +66,13 @@ function renderSwitchers() {
 }
 
 export function initWindowMode() {
+  if (isSolo) {
+    // Janela de um app só: sempre no layout desktop, sem seletor nem modo bandeja.
+    state.desktopMode = true;
+    document.body.classList.add("desktop-mode", "solo-window");
+    showMainView(SOLO_APP);
+    notifyChange();
+  }
   renderSwitchers();
   window.addEventListener("resize", updateMaximizedClass);
 

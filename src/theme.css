@@ -133,7 +133,20 @@
   --nt-selected: #dbe7ff;
   --tk-accent: #2563eb;
   --tk-danger: #dc2626;
-  --tk-sun: #c27803;
+  --tk-warn: #b45309;
+  --tk-pomo: #dc2626;
+  --tk-break: #059669;
+  --kb-card: #fff;
+  --kb-col-bg: rgba(var(--fg-rgb), 0.035);
+  --kb-gray: #6b7280;
+  --kb-blue: #2563eb;
+  --kb-teal: #0d9488;
+  --kb-green: #16a34a;
+  --kb-amber: #b45309;
+  --kb-orange: #ea580c;
+  --kb-red: #dc2626;
+  --kb-pink: #db2777;
+  --kb-purple: #7c3aed;
 }
 
 /* Itens de menu com destaque azul: texto branco nos dois temas. */

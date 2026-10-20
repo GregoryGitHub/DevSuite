@@ -1,6 +1,7 @@
 import { state } from "../state.js";
 import {
   saveHttpDataApi,
+  loadHttpDataApi,
   sendHttpRequestApi,
   cancelHttpRequestApi,
   clearHttpCookiesApi,
@@ -40,6 +41,7 @@ import {
   runnerDialog,
 } from "./httpDialogs.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
+import { registerApp } from "../appLifecycle.js";
 
 // "HTTP" tab: a Postman-like client laid out like the Notes tab
 // (tray = stacked Collections → List → Request, desktop = 3 columns).
@@ -506,6 +508,30 @@ function createFolder(collectionId, parentId = 0) {
   renderList();
 }
 
+/** "Nova pasta" da lista: coleção aberta (em "Todas"/Histórico, a da requisição atual ou a primeira). */
+function createFolderHere() {
+  const cid = scopeCollId() ?? currentRequest()?.collection_id ?? data().collections[0]?.id;
+  if (cid !== undefined) createFolder(cid);
+}
+
+/**
+ * Reordena: põe a requisição `id` antes/depois de `targetId` (na ordem do array, que é a
+ * ordem da lista), na mesma coleção/pasta do alvo.
+ */
+function placeRequest(id, targetId, after) {
+  const req = findReq(id);
+  const target = findReq(targetId);
+  if (!req || !target || req === target) return;
+  const list = data().requests;
+  list.splice(list.indexOf(req), 1);
+  list.splice(list.indexOf(target) + (after ? 1 : 0), 0, req);
+  req.collection_id = target.collection_id;
+  req.folder_id = target.folder_id;
+  req.updated_at = Date.now();
+  saveSoon();
+  renderHttp();
+}
+
 function renameFolder(coll, folderId, name) {
   const folder = coll.folders.find((f) => f.id === folderId);
   ui.editingFolderId = null;
@@ -549,6 +575,19 @@ function moveFolder(coll, folderId, parentId) {
   coll.folders.splice(coll.folders.indexOf(folder), 1);
   coll.folders.push(folder);
   expandFolder(coll, parentId);
+  saveSoon();
+  renderList();
+}
+
+/** Reordena: `folderId` vira irmã de `targetId`, logo antes/depois dela (a ordem do array é a ordem entre irmãs). */
+function placeFolder(coll, folderId, targetId, after) {
+  const folder = coll.folders.find((f) => f.id === folderId);
+  const target = coll.folders.find((f) => f.id === targetId);
+  const parentId = target?.parent_id || 0;
+  if (!folder || !target || folder === target || !canMoveFolder(coll.folders, folderId, parentId)) return;
+  folder.parent_id = parentId;
+  coll.folders.splice(coll.folders.indexOf(folder), 1);
+  coll.folders.splice(coll.folders.indexOf(target) + (after ? 1 : 0), 0, folder);
   saveSoon();
   renderList();
 }
@@ -872,6 +911,30 @@ function renderRequestItem(req, { showColl = false } = {}) {
     e.dataTransfer.setData("application/x-http-req", String(req.id));
     e.dataTransfer.effectAllowed = "move";
   });
+  // Soltar sobre outra requisição = reordenar (metade de cima = antes, de baixo = depois).
+  const after = (e) => {
+    const r = item.getBoundingClientRect();
+    return e.clientY > r.top + r.height / 2;
+  };
+  const clearDrop = () => item.classList.remove("drop-before", "drop-after");
+  item.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("application/x-http-req")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const a = after(e);
+    item.classList.toggle("drop-after", a);
+    item.classList.toggle("drop-before", !a);
+  });
+  item.addEventListener("dragleave", clearDrop);
+  item.addEventListener("drop", (e) => {
+    const id = Number(e.dataTransfer.getData("application/x-http-req"));
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const a = after(e);
+    clearDrop();
+    placeRequest(id, req.id, a);
+  });
   return item;
 }
 
@@ -904,7 +967,7 @@ function folderHeader(coll, folder, count, depth = 0) {
   const head = el("div.nt-group-label.hx-folder-head", { draggable: ui.editingFolderId !== folder.id });
   if (depth) head.style.setProperty("--depth", depth);
   head.classList.toggle("collapsed", !!folder.collapsed);
-  head.append(icon("fa-solid fa-chevron-down hx-folder-caret"), icon("fa-regular fa-folder"));
+  head.append(icon("fa-solid fa-chevron-down hx-folder-caret"), icon(folder.collapsed ? "fa-regular fa-folder" : "fa-regular fa-folder-open"));
   if (ui.editingFolderId === folder.id) {
     const input = el("input.nt-folder-input", { value: folder.name, maxLength: 80 });
     let done = false;
@@ -964,24 +1027,42 @@ function folderHeader(coll, folder, count, depth = 0) {
     e.dataTransfer.effectAllowed = "move";
   });
   head.addEventListener("dragend", () => (draggedFolder = null));
-  const accepts = (e) =>
-    e.dataTransfer.types.includes("application/x-http-req") ||
-    (e.dataTransfer.types.includes("application/x-http-folder") &&
-      draggedFolder?.collId === coll.id &&
-      canMoveFolder(coll.folders, draggedFolder.id, folder.id));
+  // Pasta arrastada: faixa de cima = antes (irmã), de baixo = depois (só se esta pasta não mostra
+  // nada embaixo: fechada ou vazia), meio = dentro. Requisição: sempre dentro.
+  const showsContent = () => !folder.collapsed && (count > 0 || coll.folders.some((f) => f.parent_id === folder.id));
+  const zone = (e) => {
+    if (!e.dataTransfer.types.includes("application/x-http-folder")) return "inside";
+    const r = head.getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    if (y < 0.3) return "before";
+    if (y > 0.7 && !showsContent()) return "after";
+    return "inside";
+  };
+  const accepts = (e, z) => {
+    if (e.dataTransfer.types.includes("application/x-http-req")) return true;
+    if (!e.dataTransfer.types.includes("application/x-http-folder") || draggedFolder?.collId !== coll.id || draggedFolder.id === folder.id) return false;
+    return canMoveFolder(coll.folders, draggedFolder.id, z === "inside" ? folder.id : folder.parent_id || 0);
+  };
+  const clearDrop = () => head.classList.remove("drop-target", "drop-before", "drop-after");
   head.addEventListener("dragover", (e) => {
-    if (!accepts(e)) return;
+    const z = zone(e);
+    if (!accepts(e, z)) return;
     e.preventDefault();
-    head.classList.add("drop-target");
+    e.stopPropagation();
+    clearDrop();
+    head.classList.add(z === "inside" ? "drop-target" : `drop-${z}`);
   });
-  head.addEventListener("dragleave", () => head.classList.remove("drop-target"));
+  head.addEventListener("dragleave", clearDrop);
   head.addEventListener("drop", (e) => {
     e.preventDefault();
-    head.classList.remove("drop-target");
+    e.stopPropagation();
+    const z = zone(e);
+    clearDrop();
     const id = Number(e.dataTransfer.getData("application/x-http-req"));
     const folderId = Number(e.dataTransfer.getData("application/x-http-folder"));
     if (id) moveRequest(id, coll.id, folder.id);
-    else if (folderId) moveFolder(coll, folderId, folder.id);
+    else if (folderId && z === "inside") moveFolder(coll, folderId, folder.id);
+    else if (folderId) placeFolder(coll, folderId, folder.id, z === "after");
   });
   return head;
 }
@@ -992,6 +1073,25 @@ function groupBox(children) {
 
 function emptyList(text, action) {
   return el("div.nt-list-empty", {}, el("div", {}, text), action ? el("button.hx-empty-btn", { type: "button", onclick: action.run }, action.label) : null);
+}
+
+function emptyFolderBox(coll, folder) {
+  const box = el("div.hx-folder-empty", {}, "Pasta vazia — arraste requisições para cá");
+  box.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("application/x-http-req")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    box.classList.add("drop-target");
+  });
+  box.addEventListener("dragleave", () => box.classList.remove("drop-target"));
+  box.addEventListener("drop", (e) => {
+    const id = Number(e.dataTransfer.getData("application/x-http-req"));
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    moveRequest(id, coll.id, folder.id);
+  });
+  return box;
 }
 
 function renderCollectionList(coll, reqs) {
@@ -1019,7 +1119,7 @@ function renderCollectionList(coll, reqs) {
       ? groupBox(inside.map((r) => renderRequestItem(r)))
       : hasChildren
         ? null
-        : el("div.hx-folder-empty", {}, "Pasta vazia — arraste requisições para cá");
+        : emptyFolderBox(coll, folder);
     if (box) {
       if (depth) box.style.setProperty("--depth", depth);
       box.classList.add("hx-folder-body");
@@ -1094,6 +1194,7 @@ function renderChrome() {
   appEl.querySelectorAll(".hx-side-switch [data-side]").forEach((b) => b.classList.toggle("active", b.dataset.side === ui.side));
   const req = currentRequest();
   appEl.querySelectorAll('[data-action="code"], [data-action="request-menu"]').forEach((b) => (b.disabled = !req));
+  appEl.querySelectorAll('[data-action="new-http-folder"]').forEach((b) => (b.disabled = inHistory()));
 }
 
 function renderEditor() {
@@ -1293,6 +1394,7 @@ function openImport() {
 
 const ACTIONS = {
   "new-request": () => createRequest(),
+  "new-http-folder": createFolderHere,
   "new-collection": createCollection,
   import: openImport,
   runner: () => openRunner(),
@@ -1413,7 +1515,7 @@ function seedExamples(d) {
       name: "Criar post",
       method: "POST",
       url: "{{baseUrl}}/posts",
-      body: { mode: "raw", lang: "json", raw: '{\n  "title": "Olá do TodoRS",\n  "body": "Criado por {{$randomFullName}}",\n  "userId": 1\n}' },
+      body: { mode: "raw", lang: "json", raw: '{\n  "title": "Olá do Dev Suite",\n  "body": "Criado por {{$randomFullName}}",\n  "userId": 1\n}' },
       scripts: { pre: "", test: 'pm.test("Criado (201)", () => pm.response.to.have.status(201));' },
     }),
     newRequest({ collection_id: coll.id, name: "Echo com cabeçalhos", url: "https://httpbin.org/anything", headers: [kv("X-Exemplo", "{{$guid}}")] }),
@@ -1500,6 +1602,49 @@ export function initHttp() {
     }
   });
   listEl.addEventListener("scroll", closeMenu);
+  // Área vazia da lista: menu com nova requisição/pasta; soltar requisição = raiz da coleção (no fim).
+  listEl.addEventListener("contextmenu", (e) => {
+    if (inHistory() || e.target.closest(".hx-item, .hx-folder-head")) return;
+    e.preventDefault();
+    const cid = scopeCollId() ?? currentRequest()?.collection_id ?? data().collections[0]?.id;
+    showMenu(e.clientX, e.clientY, [
+      { label: "Nova Requisição", icon: "fa-solid fa-plus", run: () => createRequest({ collectionId: cid }) },
+      { label: "Nova Pasta", icon: "fa-solid fa-folder-plus", run: createFolderHere },
+    ]);
+  });
+  // Pasta solta fora de outra pasta = volta para a raiz da coleção (desagrupar).
+  const rootFolderDrop = (e) => draggedFolder && draggedFolder.collId === scopeCollId() && e.dataTransfer.types.includes("application/x-http-folder");
+  listEl.addEventListener("dragover", (e) => {
+    if (scopeCollId() === null || ui.query.trim()) return;
+    if (!e.dataTransfer.types.includes("application/x-http-req") && !rootFolderDrop(e)) return;
+    e.preventDefault();
+  });
+  listEl.addEventListener("drop", (e) => {
+    const cid = scopeCollId();
+    if (cid === null || ui.query.trim()) return;
+    if (rootFolderDrop(e)) {
+      e.preventDefault();
+      const coll = findColl(cid);
+      const folder = coll?.folders.find((f) => f.id === draggedFolder.id);
+      if (!folder) return;
+      // Já na raiz: vai para o fim da lista de pastas.
+      if (!folder.parent_id) {
+        coll.folders.splice(coll.folders.indexOf(folder), 1);
+        coll.folders.push(folder);
+        saveSoon();
+        return renderList();
+      }
+      return moveFolder(coll, folder.id, 0);
+    }
+    const id = Number(e.dataTransfer.getData("application/x-http-req"));
+    const req = findReq(id);
+    if (!req) return;
+    e.preventDefault();
+    const list = data().requests;
+    list.splice(list.indexOf(req), 1);
+    list.push(req);
+    moveRequest(id, cid, 0);
+  });
 
   document.addEventListener("keydown", handleGlobalKeydown);
 
@@ -1531,5 +1676,15 @@ export function initHttp() {
 
   window.addEventListener("beforeunload", () => {
     if (saveTimer) flushSave();
+  });
+
+  registerApp("http", {
+    flush: async () => {
+      if (!saveTimer) return;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      if (data()) await saveHttpDataApi(data());
+    },
+    reload: async () => setHttpData(await loadHttpDataApi()),
   });
 }

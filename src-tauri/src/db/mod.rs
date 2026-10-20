@@ -237,6 +237,14 @@ pub async fn db_table_schema(app: tauri::AppHandle, target: Target, schema: Stri
     ready(&app, &target, &mut guard, false).await?.table_schema(&schema, &name).await
 }
 
+/// Script de criação do banco inteiro ("Gerar DDL do banco"), na ordem de dependência.
+#[tauri::command]
+pub async fn db_database_script(app: tauri::AppHandle, target: Target, options: DbScriptOptions) -> Result<DbScript, String> {
+    let slot = slot(&app, &target.session_id);
+    let mut guard = slot.lock().await;
+    ready(&app, &target, &mut guard, false).await?.database_script(&options).await
+}
+
 // ---------- Execução ----------
 
 /// Executa SQL e envia os result sets em lotes pelo `on_event`.

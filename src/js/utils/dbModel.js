@@ -111,6 +111,8 @@ function normalizeTab(t = {}) {
     order_by: String(t.order_by || ""),
     /** MongoDB: projeção da aba de coleção. */
     projection: String(t.projection || ""),
+    /** DDL do banco inteiro (kind "database"): opções do script (DbScriptOptions). */
+    options: t.options && typeof t.options === "object" ? { ...t.options } : null,
   };
 }
 

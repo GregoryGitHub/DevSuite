@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "todo-rs",
-  "version": "0.4.0",
+  "productName": "Dev Suite",
+  "mainBinaryName": "dev-suite",
+  "version": "1.0.0",
   "identifier": "com.todors.app",
   "build": {
     "frontendDist": "../src"
@@ -11,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Todo",
+        "title": "Dev Suite",
         "width": 370,
         "height": 530,
         "resizable": false,

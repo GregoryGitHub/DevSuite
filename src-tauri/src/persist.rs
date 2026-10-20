@@ -68,7 +68,7 @@ fn writer(rx: Receiver<Msg>) {
 }
 
 /// Escreve num temporário ao lado e renomeia: o arquivo nunca fica pela metade.
-pub fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     let mut tmp: OsString = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);

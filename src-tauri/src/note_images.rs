@@ -3,12 +3,17 @@
 //! Cada imagem vira um arquivo em `<app_data>/note-images/` (nome = hash do conteúdo) e o
 //! HTML da nota guarda só a URL do protocolo `noteimg`. Assim o notes.db continua
 //! pequeno: salvar uma nota não regrava nem reserializa as imagens.
+//!
+//! No modo cofre (notes_vault.rs) as imagens coladas vão para `<cofre>/attachments/` e o
+//! protocolo também serve qualquer arquivo do cofre por `noteimg://localhost/v/<caminho>`
+//! (imagens que já estavam no cofre, referenciadas pelo Markdown).
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 use tauri::http::{header, Request, Response, StatusCode};
@@ -19,14 +24,31 @@ const MAX_BYTES: usize = 50 * 1024 * 1024;
 /// Arquivos órfãos mais novos que isso não são apagados (ex.: colados e ainda não salvos).
 const GC_GRACE: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// Raiz do cofre aberto (None = notas no notes.db).
+static VAULT_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+pub fn set_vault_root(root: Option<PathBuf>) {
+    if let Ok(mut r) = VAULT_ROOT.write() {
+        *r = root;
+    }
+}
+
+fn vault_root() -> Option<PathBuf> {
+    VAULT_ROOT.read().ok().and_then(|r| r.clone())
+}
+
 fn images_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("note-images");
+    let dir = match vault_root() {
+        Some(root) => root.join(crate::notes_vault::ATTACHMENTS_DIR),
+        None => app.path().app_data_dir().map_err(|e| e.to_string())?.join("note-images"),
+    };
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
+}
+
+/// Pasta das imagens do banco local (a cópia das notas para um cofre lê daqui).
+fn local_images_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("note-images"))
 }
 
 fn normalize_ext(ext: &str) -> Option<&'static str> {
@@ -68,6 +90,7 @@ fn mime(ext: &str) -> &'static str {
         "webp" => "image/webp",
         "bmp" => "image/bmp",
         "avif" => "image/avif",
+        "svg" => "image/svg+xml",
         _ => "application/octet-stream",
     }
 }
@@ -130,10 +153,11 @@ pub async fn import_note_image(app: tauri::AppHandle, path: String) -> Result<St
     store(&app, &bytes, ext)
 }
 
-/// Copia as imagens indicadas para `dir` (exportação de Markdown).
+/// Copia as imagens indicadas para `dir` (exportação de Markdown). `local` = lê das imagens
+/// do banco local mesmo com um cofre aberto (cópia das notas para o cofre).
 #[tauri::command]
-pub async fn export_note_images(app: tauri::AppHandle, names: Vec<String>, dir: String) -> Result<(), String> {
-    let src = images_dir(&app)?;
+pub async fn export_note_images(app: tauri::AppHandle, names: Vec<String>, dir: String, local: Option<bool>) -> Result<(), String> {
+    let src = if local.unwrap_or(false) { local_images_dir(&app)? } else { images_dir(&app)? };
     let dest = Path::new(&dir);
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     for name in names.iter().filter(|n| valid_name(n)) {
@@ -146,7 +170,7 @@ pub async fn export_note_images(app: tauri::AppHandle, names: Vec<String>, dir: 
 pub fn gc_note_images(app: &tauri::AppHandle, keep: &HashSet<String>) -> Result<u32, String> {
     let now = SystemTime::now();
     let mut removed = 0;
-    for entry in fs::read_dir(images_dir(app)?).map_err(|e| e.to_string())?.flatten() {
+    for entry in fs::read_dir(local_images_dir(app)?).map_err(|e| e.to_string())?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if keep.contains(&name) {
             continue;
@@ -164,9 +188,57 @@ pub fn gc_note_images(app: &tauri::AppHandle, keep: &HashSet<String>) -> Result<
     Ok(removed)
 }
 
+/// Decodifica `%XX` (caminhos do cofre na URL).
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let hex = s.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Arquivo do cofre para `v/<caminho>`: só caminhos relativos, sem `..`, e que continuem
+/// dentro do cofre depois de resolver links simbólicos.
+pub fn vault_file(root: &Path, encoded: &str) -> Option<PathBuf> {
+    let rel = percent_decode(encoded)?;
+    let rel = Path::new(&rel);
+    if rel.as_os_str().is_empty() || !rel.components().all(|c| matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    let root = root.canonicalize().ok()?;
+    let path = root.join(rel).canonicalize().ok()?;
+    (path.starts_with(&root) && path.is_file()).then_some(path)
+}
+
 /// Responde `noteimg://localhost/<nome>` (ou `http://noteimg.localhost/<nome>` no Windows).
 pub fn serve(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let name = request.uri().path().trim_start_matches('/');
+    if let Some(encoded) = name.strip_prefix("v/") {
+        let path = vault_root().and_then(|root| vault_file(&root, encoded));
+        let ext = path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        return match path.and_then(|p| fs::read(p).ok()) {
+            Some(bytes) => Response::builder()
+                .header(header::CONTENT_TYPE, mime(normalize_ext(&ext).unwrap_or(&ext)))
+                // O arquivo pode ser trocado por outra pessoa no cofre.
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(bytes)
+                .unwrap(),
+            None => Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap(),
+        };
+    }
     let file = valid_name(name)
         .then(|| images_dir(app).ok())
         .flatten()
@@ -185,5 +257,27 @@ pub fn serve(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec
             .status(StatusCode::NOT_FOUND)
             .body(Vec::new())
             .unwrap(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_file_rejects_paths_outside_the_vault() {
+        let dir = std::env::temp_dir().join(format!("todors-img-{}", std::process::id()));
+        fs::create_dir_all(dir.join("cofre/img")).unwrap();
+        fs::write(dir.join("cofre/img/a b.png"), "x").unwrap();
+        fs::write(dir.join("fora.png"), "x").unwrap();
+        let root = dir.join("cofre");
+        assert!(vault_file(&root, "img/a%20b.png").is_some());
+        assert!(vault_file(&root, "../fora.png").is_none());
+        assert!(vault_file(&root, "img/../../fora.png").is_none());
+        assert!(vault_file(&root, "%2E%2E/fora.png").is_none());
+        assert!(vault_file(&root, "").is_none());
+        let abs = dir.join("fora.png").to_string_lossy().replace('\\', "/");
+        assert!(vault_file(&root, &abs).is_none());
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

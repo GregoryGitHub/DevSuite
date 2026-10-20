@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 const base = new URL("../src/js/utils/", import.meta.url).href;
 const { parseCommand, parseShellValue, splitMongo, mongoStatementAt, indexName } = await import(base + "mongoShell.js");
-const { bsonType, cellOf, toShell, ejsonFromInput, createDocState, docsToRows, buildMongoChanges, cellToEjson } = await import(base + "mongoValue.js");
+const { bsonType, cellOf, toShell, ejsonFromInput, createDocState, ensureIdColumn, projectionHidesId, docsToRows, buildMongoChanges, cellToEjson } = await import(base + "mongoValue.js");
 const { GridModel } = await import(base + "gridModel.js");
 
 // --- parser
@@ -84,6 +84,18 @@ assert.deepEqual(ch.map((x) => x.text), [
   "db.people.updateOne({ _id: ObjectId('65f1a2b3c4d5e6f708192a3c') }, { $set: { name: 'Bia Lú' }, $unset: { tags: '' } })",
   "db.people.insertOne({ name: 'Caio' })",
 ]);
+
+// Coleção vazia: _id já existe (aba editável) e inserir funciona; documentos depois não duplicam a coluna.
+const empty = createDocState();
+ensureIdColumn(empty);
+assert.deepEqual(empty.columns.map((c) => c.name), ["_id"]);
+const em = new GridModel(empty.columns, []);
+em.addRow(em.blankRow());
+assert.deepEqual(buildMongoChanges("c", empty, empty.columns, em.pending()).map((x) => x.text), ["db.c.insertOne({})"]);
+assert.equal(docsToRows(empty, [{ _id: 1, a: 2 }]).added.map((c) => c.name).join(), "a");
+assert.equal(projectionHidesId({ _id: 0 }), true);
+assert.equal(projectionHidesId({ name: 1 }), false);
+assert.equal(projectionHidesId(null), false);
 console.log("mongo: ok");
 
 // --- connection string

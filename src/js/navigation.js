@@ -1,4 +1,5 @@
 import { state } from "./state.js";
+import { SOLO_APP } from "./windowContext.js";
 
 const PANELS = {
   tasks: document.getElementById("view-tasks"),
@@ -13,6 +14,12 @@ const PANELS = {
 /** Shows one of the main views and notifies listeners via the "mainviewchange" event. */
 export function showMainView(view) {
   if (!PANELS[view]) return;
+  // Janela desatachada: só o seu app. Principal: app solto = foca a janela dele.
+  if (SOLO_APP && view !== SOLO_APP) return;
+  if (state.detached.has(view)) {
+    window.__TAURI__?.core.invoke("app_window_focus", { view });
+    return;
+  }
   state.activeMainView = view;
 
   document.querySelectorAll(".bottom-tab").forEach((btn) => {

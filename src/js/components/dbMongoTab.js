@@ -1,7 +1,7 @@
 import { el, icon } from "../utils/dom.js";
 import { uid, target } from "../utils/dbModel.js";
 import { parseShellValue } from "../utils/mongoShell.js";
-import { createDocState, docsToRows, cellType, cellOf, ejsonFromInput, buildMongoChanges, toShell, cellEditText } from "../utils/mongoValue.js";
+import { createDocState, ensureIdColumn, projectionHidesId, docsToRows, cellType, cellOf, ejsonFromInput, buildMongoChanges, toShell, cellEditText } from "../utils/mongoValue.js";
 import { createDataGrid } from "./dataGrid.js";
 import { openValueEditor } from "./dataGridEditor.js";
 import { codeEditor } from "./codeEditor.js";
@@ -237,6 +237,7 @@ export function createMongoTab(ctx, tab) {
     grid.setMessage(loadedOnce ? "" : "Carregando…");
     footer.setInfo("Executando…", "busy");
     const next = createDocState();
+    if (!projectionHidesId(q.projection)) ensureIdColumn(next);
     let count = 0;
     let started = false;
     try {
@@ -251,14 +252,14 @@ export function createMongoTab(ctx, tab) {
           if (!started) {
             started = true;
             state = next;
-            grid.setColumns([...added], { keepLayout: true });
+            grid.setColumns([...next.columns], { keepLayout: true });
           } else grid.addColumns(added);
           grid.appendRows(rows);
         },
       });
       if (!started) {
         state = next;
-        grid.setColumns([]);
+        grid.setColumns([...next.columns]);
       }
       hasMore = count > size;
       loadedOnce = true;

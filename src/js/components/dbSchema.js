@@ -596,3 +596,94 @@ export async function tableDesigner(ctx, { conn, database, schema = "dbo", name 
   else if (focus.index) focusItem((model.indexes.find((i) => i.name === focus.index) || model.fks.find((f) => f.name === focus.index))?.key, true);
   else (model.isNew ? nameInput : null)?.focus();
 }
+
+// ---------- Script do banco inteiro ----------
+
+const SCRIPT_KINDS = [
+  ["tables", "Tabelas"],
+  ["indexes", "Índices"],
+  ["foreign_keys", "Chaves estrangeiras"],
+  ["types", "Tipos de usuário"],
+  ["sequences", "Sequences"],
+  ["synonyms", "Sinônimos"],
+  ["views", "Views"],
+  ["functions", "Funções"],
+  ["procedures", "Procedures"],
+  ["triggers", "Triggers"],
+];
+const SCRIPT_OPTS_KEY = "db-script-opts";
+
+function scriptCheck(label, checked, onchange) {
+  const box = el("input", { type: "checkbox", checked, onchange: () => onchange(box.checked) });
+  return el("label.db-check", {}, box, el("span", {}, label));
+}
+
+/**
+ * "Gerar DDL do banco": escolhe o que entra no script (lembrado no localStorage) e os schemas;
+ * o script é gerado no Rust e aberto numa aba de DDL (ctx.openDatabaseScript).
+ * `schema` (opcional): vem marcado sozinho (menu do schema no Explorer).
+ */
+export function databaseScriptDialog(ctx, { conn, database, schema = "" }) {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(SCRIPT_OPTS_KEY) || "{}") || {};
+  } catch {}
+  const opts = { ...Object.fromEntries(SCRIPT_KINDS.map(([k]) => [k, true])), if_not_exists: false, ...saved };
+  const err = el("div.dbs-error", { hidden: true });
+  const schemaBox = el("div.dbs-script-schemas", {}, el("span.dbs-muted", {}, "Carregando schemas…"));
+  let schemas = []; // [{ name, on }]
+
+  const kinds = el(
+    "div.dbs-script-kinds",
+    {},
+    SCRIPT_KINDS.map(([k, label]) => scriptCheck(label, opts[k], (v) => (opts[k] = v))),
+  );
+
+  dbApi
+    .introspect(metaTarget(conn, database), { kind: "schemas" })
+    .then((list) => {
+      schemas = list.map((s) => ({ name: s.name, on: !schema || s.name === schema }));
+      schemaBox.innerHTML = "";
+      schemaBox.append(...schemas.map((s) => scriptCheck(s.name, s.on, (v) => (s.on = v))));
+    })
+    .catch((e) => {
+      schemaBox.innerHTML = "";
+      schemaBox.append(el("span.dbs-muted", {}, `Schemas indisponíveis (${e}); o script inclui todos.`));
+    });
+
+  function generate() {
+    const picked = schemas.filter((s) => s.on).map((s) => s.name);
+    if (schemas.length && !picked.length) {
+      err.hidden = false;
+      err.textContent = "Marque pelo menos um schema.";
+      return;
+    }
+    try {
+      localStorage.setItem(SCRIPT_OPTS_KEY, JSON.stringify(opts));
+    } catch {}
+    dbModal.close();
+    // Todos marcados = vazio (o Rust inclui todos).
+    ctx.openDatabaseScript({ conn, database, options: { ...opts, schemas: picked.length === schemas.length ? [] : picked } });
+  }
+
+  const ok = btn([icon("fa-solid fa-scroll"), " Gerar"], generate, "hx-btn.primary");
+  dbModal.open({
+    title: `Gerar DDL de ${database}`,
+    iconCls: "fa-solid fa-scroll",
+    className: "dbs-action-modal",
+    body: el(
+      "div.dbs-action.dbs-script",
+      {},
+      el("p.hx-modal-text", {}, "Script com tudo na ordem de criação (tabelas pai antes das filhas, cada uma com índices e FKs; views e funções na ordem de dependência), para recriar o banco em outro ambiente. Não inclui dados nem permissões."),
+      el("div.dbs-preview-head", {}, "Objetos"),
+      kinds,
+      el("div.dbs-preview-head", {}, "Schemas"),
+      schemaBox,
+      scriptCheck("Proteger com IF NOT EXISTS (só cria o que falta; pode rodar sobre um banco já criado)", opts.if_not_exists, (v) => (opts.if_not_exists = v)),
+      err,
+      el("p.dbs-where", {}, icon("fa-solid fa-database"), ` ${connLabel(conn)} / ${database}`),
+    ),
+    footer: [el("span.hx-flex"), btn("Cancelar", dbModal.close), ok],
+  });
+  ok.focus();
+}

@@ -54,7 +54,7 @@ pub async fn connect(conn: &RmqConn, password: &str, vhost: &str, purpose: &str)
     let host = amqp_host(conn);
     let port = conn.amqp_port.unwrap_or(if conn.amqp_tls { 5671 } else { 5672 });
     let mut args = OpenConnectionArguments::new(&host, port, &conn.user, password);
-    args.virtual_host(vhost).connection_name(&format!("TodoRS ({purpose})")).heartbeat(30);
+    args.virtual_host(vhost).connection_name(&format!("Dev Suite ({purpose})")).heartbeat(30);
     if conn.amqp_tls {
         ensure_crypto_provider();
         let tls = TlsAdaptor::without_client_auth(None, host.clone()).map_err(|e| format!("TLS: {e}"))?;

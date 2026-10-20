@@ -21,7 +21,8 @@
   --nt-selected: #a8851a;
   --nt-menu-bg: rgba(42, 42, 44, 0.97);
   --nt-menu-hl: #2f6fdc;
-  --nt-sb-w: 240px;
+  /* Cabe o seletor de apps (7 botões) + o botão da barra lateral sem alargar a barra de cima. */
+  --nt-sb-w: 264px;
   --nt-list-w: 300px;
 }
 
@@ -216,6 +217,41 @@ body.desktop-mode .compact-only {
 
 .nt-section-head > span {
   flex: 1;
+}
+
+/* Seletor de armazenamento: "No Meu PC" / nome do cofre, abre a lista de cofres. */
+.nt-storage-switch {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: -4px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nt-storage-switch:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text);
+}
+
+.nt-storage-switch #nt-storage-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.nt-storage-switch .fa-chevron-down {
+  font-size: 8px;
+  opacity: 0.7;
 }
 
 .nt-section-btn {
@@ -1237,8 +1273,7 @@ body.desktop-mode.maximized .app {
 }
 
 body.desktop-mode .window-bar,
-body.desktop-mode .bottom-nav,
-body.desktop-mode #view-settings {
+body.desktop-mode .bottom-nav {
   display: none !important;
 }
 
@@ -1252,6 +1287,7 @@ body.desktop-mode #view-notes {
   height: 52px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--nt-sep);
+  container: nt-toolbar / inline-size;
 }
 
 .nt-tb-sidebar {
@@ -1307,6 +1343,31 @@ body.desktop-mode #view-notes {
   border-left: 1px solid var(--nt-sep);
 }
 
+/* Barra apertada (janela no tamanho padrão): botões mais compactos para a busca caber.
+   O container é a barra inteira: editor ≈ barra − barra lateral (264) − lista (300). */
+@container nt-toolbar (max-width: 1284px) {
+  .nt-tb-editor {
+    gap: 2px;
+  }
+  .nt-tb-editor .nt-tb-btn {
+    min-width: 28px;
+    padding: 0 6px;
+  }
+  .nt-tb-editor .nt-tb-group {
+    margin-left: 2px;
+  }
+}
+
+@container nt-toolbar (max-width: 1084px) {
+  .nt-tb-editor [data-theme-toggle] {
+    display: none;
+  }
+  /* Janela estreita: a busca volta a encolher para os botões de janela nunca sumirem. */
+  .nt-toolbar .nt-tb-editor .nt-search {
+    min-width: 0;
+  }
+}
+
 .nt-tb-group {
   display: flex;
   align-items: center;
@@ -1348,7 +1409,7 @@ body.desktop-mode #view-notes {
 .nt-toolbar .nt-search {
   /* Shrinks first so the window buttons never get pushed out of a narrow window. */
   flex: 0 1 190px;
-  min-width: 0;
+  min-width: 120px;
   height: 28px;
   border-radius: 7px;
   background: rgba(118, 118, 128, 0.2);

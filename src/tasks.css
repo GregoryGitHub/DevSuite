@@ -1,6 +1,7 @@
 /* =========================================================================
-   Tarefas — mesmo esqueleto das Notas (.notes-app / .nt-*).
-   Bandeja: lista → detalhe em pilha. Desktop: listas | tarefas | detalhe.
+   Tarefas — board kanban no esqueleto das Notas (.notes-app / .nt-*).
+   Bandeja: seletor de board + abas das colunas → lista → detalhe, em pilha.
+   Desktop: boards | colunas lado a lado | detalhe. Barra de foco (Pomodoro) no rodapé.
    ========================================================================= */
 
 .tasks-app {
@@ -9,243 +10,273 @@
   --nt-selected: #1f4f96;
   --tk-accent: #3b82f6;
   --tk-danger: #f87171;
-  --tk-sun: #fbbf24;
+  --tk-warn: #fbbf24;
+  --tk-pomo: #f87171;
+  --tk-break: #34d399;
+  --pomo-c: var(--tk-pomo); /* cor da sessão atual: foco (vermelho) ou pausa (verde) */
+  --kb-card: rgba(var(--fg-rgb), 0.06);
+  --kb-col-bg: rgba(var(--fg-rgb), 0.03);
+  /* Paleta das colunas/etiquetas (COLORS em kanbanModel.js) */
+  --kb-gray: #9ca3af;
+  --kb-blue: #60a5fa;
+  --kb-teal: #2dd4bf;
+  --kb-green: #4ade80;
+  --kb-amber: #fbbf24;
+  --kb-orange: #fb923c;
+  --kb-red: #f87171;
+  --kb-pink: #f472b6;
+  --kb-purple: #a78bfa;
 }
 
 .tasks-app [hidden] {
   display: none !important;
 }
 
+.tasks-app.pomo-break {
+  --pomo-c: var(--tk-break);
+}
+
+/* Toast acima da barra de foco */
+.tasks-app.has-focus .hx-toast {
+  bottom: 64px;
+}
+
 body.tasks-editing .bottom-nav {
   display: none;
 }
 
-/* ---------- Cabeçalho da lista ---------- */
-
-.tk-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
+.kb-dot {
+  width: 8px;
+  height: 8px;
   flex-shrink: 0;
-}
-
-.tk-head-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.tk-title {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tk-title i {
-  font-size: 0.8em;
-  color: var(--nt-yellow);
-}
-
-#tk-title-icon.fa-sun {
-  color: var(--tk-sun);
-}
-
-.tk-subtitle {
-  font-size: 12px;
-  color: var(--nt-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* ---------- Seletor (bandeja) ---------- */
-
-.tk-seg {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 9px;
-  background: rgba(var(--fg-rgb), 0.06);
-  flex-shrink: 0;
-}
-
-.tk-seg button {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: none;
-  border-radius: 7px;
-  background: none;
-  color: var(--nt-muted) !important;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.tk-seg button i {
-  font-size: 11px;
-}
-
-.tk-seg button.active {
-  background: rgba(var(--fg-rgb), 0.13);
-  color: var(--nt-text) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, calc(0.25 * var(--shade-k)));
-}
-
-.tk-seg button.active i {
-  color: var(--nt-yellow);
-}
-
-/* ---------- Nova tarefa ---------- */
-
-.tk-add {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 5px 0 12px;
-  border: 1px solid var(--nt-sep);
-  border-radius: 10px;
-  background: rgba(var(--fg-rgb), 0.045);
-  flex-shrink: 0;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-}
-
-.tk-add:focus-within {
-  border-color: color-mix(in srgb, var(--tk-accent) 60%, transparent);
-  background: rgba(var(--fg-rgb), 0.06);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tk-accent) 14%, transparent);
-}
-
-.tk-add-icon {
-  color: var(--nt-yellow);
-  font-size: 13px;
-}
-
-.tk-add input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  border: none;
-  outline: none;
-  background: none;
-  color: var(--nt-text);
-  font: inherit;
-  font-size: 13px;
-  user-select: text;
-}
-
-.tk-add input::placeholder {
-  color: var(--nt-muted);
-}
-
-.tk-add-btn {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
   border-radius: 50%;
-  background: var(--tk-accent);
-  color: #fff !important;
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0;
-  transform: scale(0.7);
-  pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  background: var(--c, var(--kb-gray));
 }
 
-.tk-add:has(input:not(:placeholder-shown)) .tk-add-btn {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
+.kb-dot.big {
+  width: 10px;
+  height: 10px;
+  margin-top: 10px;
 }
 
-/* ---------- Lista ---------- */
+/* ---------- Board e colunas ---------- */
 
-.tk-list {
+.kb-board {
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+
+.kb-col {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
-.tk-group-label {
+.kb-col-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 6px 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--nt-text);
+  cursor: grab;
   user-select: none;
 }
 
-.tk-group-label.collapsible {
-  cursor: pointer;
+.kb-col-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.tk-group-label.tone-danger {
-  color: var(--tk-danger) !important;
-}
-
-.tk-group-caret {
-  width: 10px;
-  font-size: 9px !important;
-  color: var(--nt-muted) !important;
-}
-
-.tk-group-count {
-  font-size: 11px;
-  font-weight: 500;
+.kb-col-role {
+  font-size: 10px;
   color: var(--nt-muted);
 }
 
-.tk-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  cursor: pointer;
+.kb-col-count {
+  margin-right: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.07);
+  color: var(--nt-muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 
-.tk-item-main {
+.kb-col-count.over {
+  background: color-mix(in srgb, var(--tk-danger) 18%, transparent);
+  color: var(--tk-danger);
+}
+
+.kb-col-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 11.5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.kb-col:hover .kb-col-btn,
+.kb-col-btn:focus-visible {
+  opacity: 1;
+}
+
+.kb-col-btn:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text) !important;
+}
+
+.kb-rename {
   flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.tk-item-text {
+.kb-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 44px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fg-rgb), 0.18) transparent;
+}
+
+.kb-col-empty {
+  padding: 14px 10px;
+  border: 1.5px dashed rgba(var(--fg-rgb), 0.12);
+  border-radius: 9px;
+  color: var(--nt-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.kb-col-empty.big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 16px;
+  border: none;
   font-size: 13px;
-  line-height: 1.35;
+}
+
+.kb-col-empty.big i {
+  font-size: 28px;
+  opacity: 0.35;
+}
+
+.kb-drop-line {
+  height: 3px;
+  margin: -2px 2px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--tk-accent);
+  pointer-events: none;
+}
+
+/* ---------- Card ---------- */
+
+.kb-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 9px 9px 11px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 9px;
+  background: var(--kb-card);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, calc(0.18 * var(--shade-k)));
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.kb-card:hover {
+  border-color: var(--nt-sep-strong);
+  background: rgba(var(--fg-rgb), 0.08);
+}
+
+.kb-card.selected {
+  border-color: color-mix(in srgb, var(--tk-accent) 70%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tk-accent) 70%, transparent);
+}
+
+/* Atrasado / foco: barra reta com pontas arredondadas, afastada da borda do card */
+.kb-card.overdue::before,
+.kb-card.session::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--tk-danger);
+  pointer-events: none;
+}
+
+.kb-card.session::before {
+  background: var(--pomo-c);
+}
+
+.kb-card.done .kb-card-title {
+  color: var(--nt-muted);
+}
+
+.kb-card.dragging {
+  opacity: 0.35;
+}
+
+.kb-card.flash {
+  animation: kbFlash 0.6s ease;
+}
+
+@keyframes kbFlash {
+  0% { background: color-mix(in srgb, var(--tk-accent) 28%, transparent); }
+  100% { background: var(--kb-card); }
+}
+
+.kb-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.kb-card-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.38;
   color: var(--nt-text);
   word-break: break-word;
 }
 
-.tk-item.done .tk-item-text {
-  color: var(--nt-muted);
-  text-decoration: line-through;
-  text-decoration-color: rgba(var(--fg-rgb), 0.35);
+.kb-card .kb-rename {
+  font-weight: 400;
 }
 
-.tk-item-meta {
+.kb-card-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
 }
 
-.tk-meta {
+.kb-meta {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -254,171 +285,514 @@ body.tasks-editing .bottom-nav {
   white-space: nowrap;
 }
 
-.tk-meta i {
+.kb-meta i {
   font-size: 10px;
 }
 
-.tk-meta.overdue {
+.kb-due.overdue {
   color: var(--tk-danger);
-  font-weight: 500;
+  font-weight: 600;
 }
 
-.tk-meta-sun i {
-  color: var(--tk-sun);
+.kb-due.today {
+  color: var(--tk-warn);
+  font-weight: 600;
 }
 
-.tk-meta-pomo {
-  color: var(--nt-yellow);
+.kb-due.soon {
+  color: var(--nt-text-2);
+}
+
+.kb-meta-pomo {
+  color: var(--pomo-c);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  font-weight: 500;
 }
 
-.tk-edit-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  background: none;
-  color: var(--nt-text);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.35;
-  padding: 0;
-  user-select: text;
+.kb-meta-tomato i {
+  color: var(--tk-pomo);
 }
 
-.tk-item.editing {
-  box-shadow: inset 0 0 0 1.5px var(--tk-accent);
+.kb-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-/* Círculo de concluir */
-.tk-check {
+.kb-label {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 20%, transparent);
+  color: var(--c);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Botão ▶ do Pomodoro: vira um anel de progresso enquanto há sessão */
+.kb-play {
+  --p: 0;
+  position: relative;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
-  display: inline-flex;
-  padding: 2px;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
-
-.tk-circle {
-  width: 18px;
-  height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid rgba(var(--fg-rgb), 0.32);
+  margin: -2px -2px 0 0;
+  border: none;
   border-radius: 50%;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.tk-circle i {
+  background: rgba(var(--fg-rgb), 0.08);
+  color: var(--nt-muted) !important;
   font-size: 9px;
-  color: #fff;
+  cursor: pointer;
   opacity: 0;
-  transform: scale(0.5);
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 
-.tk-check:hover .tk-circle {
-  border-color: var(--tk-accent);
+.kb-play i {
+  position: relative;
+  z-index: 1;
 }
 
-.tk-check:hover .tk-circle i {
-  opacity: 0.45;
-  transform: none;
-  color: var(--tk-accent);
-}
-
-.tk-check.checked .tk-circle {
-  border-color: var(--tk-accent);
-  background: var(--tk-accent);
-}
-
-.tk-check.checked .tk-circle i {
+.kb-card:hover .kb-play,
+.kb-card.selected .kb-play,
+.kb-play.session {
   opacity: 1;
-  transform: none;
-  color: #fff;
 }
 
-.tk-check.pop .tk-circle {
-  animation: tkPop 0.32s ease;
+.kb-play:hover {
+  background: color-mix(in srgb, var(--tk-pomo) 22%, transparent);
+  color: var(--tk-pomo) !important;
 }
 
-.tk-check.big .tk-circle {
-  width: 22px;
-  height: 22px;
+.kb-play.session {
+  background: conic-gradient(var(--pomo-c) calc(var(--p) * 360deg), rgba(var(--fg-rgb), 0.12) 0);
+  color: var(--pomo-c) !important;
 }
 
-.tk-check.big .tk-circle i {
-  font-size: 11px;
+.kb-play.session::before {
+  content: "";
+  position: absolute;
+  inset: 2.5px;
+  border-radius: 50%;
+  background: var(--nt-bg);
 }
 
-@keyframes tkPop {
-  0% { transform: scale(0.8); }
-  55% { transform: scale(1.18); }
-  100% { transform: scale(1); }
-}
+/* ---------- Adicionar card / coluna ---------- */
 
-/* Ações da linha */
-.tk-item-actions {
+.kb-add-card {
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.tk-act {
-  width: 28px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  gap: 8px;
+  margin: 2px 6px 8px;
+  padding: 7px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: none;
   color: var(--nt-muted) !important;
   font-size: 12.5px;
+  text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
 }
 
-.tk-act:hover {
+.kb-add-card:hover {
   background: var(--nt-hover);
   color: var(--nt-text) !important;
 }
 
-.tk-act.danger:hover {
+.kb-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 8px 8px;
+  flex-shrink: 0;
+}
+
+.kb-composer-input {
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--tk-accent) 55%, transparent);
+  border-radius: 9px;
+  background: var(--kb-card);
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.38;
+  resize: none;
+  outline: none;
+  user-select: text;
+}
+
+.kb-composer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 7px;
+  background: none;
+  color: var(--nt-text-2) !important;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kb-btn:hover {
+  background: var(--nt-hover);
+}
+
+.kb-btn.primary {
+  border-color: transparent;
+  background: var(--tk-accent);
+  color: #fff !important;
+}
+
+.kb-btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.kb-btn.danger:hover {
   color: var(--tk-danger) !important;
 }
 
-.tk-act.active {
-  color: var(--nt-yellow) !important;
-}
-
-.tk-act.active i {
-  animation: pulse 1.5s infinite;
-}
-
-.tk-chevron {
-  font-size: 10px;
-  color: rgba(var(--fg-rgb), 0.25);
-  margin-left: 2px;
-}
-
-.tk-empty {
+.kb-add-col {
+  flex: 0 0 240px;
+  height: 42px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 44px 16px;
-  color: var(--nt-muted);
-  font-size: 13px;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1.5px dashed rgba(var(--fg-rgb), 0.14);
+  border-radius: 12px;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.kb-add-col:hover {
+  border-color: rgba(var(--fg-rgb), 0.28);
+  color: var(--nt-text) !important;
+}
+
+/* ---------- Filtros (barra do desktop) ---------- */
+
+.kb-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 6px;
+}
+
+.kb-filter {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--nt-text-2) !important;
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kb-filter i {
+  font-size: 10px;
+  color: var(--c, var(--nt-muted));
+}
+
+.kb-filter:hover {
+  background: var(--nt-hover);
+}
+
+.kb-filter.active {
+  border-color: transparent;
+  background: var(--nt-yellow-soft);
+  color: var(--nt-yellow) !important;
+  font-weight: 600;
+}
+
+.kb-filter.danger.active {
+  background: color-mix(in srgb, var(--tk-danger) 16%, transparent);
+  color: var(--tk-danger) !important;
+}
+
+.kb-filter-n {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(var(--fg-rgb), 0.1);
+  font-size: 10px;
+  font-weight: 600;
   text-align: center;
 }
 
-.tk-empty i {
-  font-size: 30px;
-  opacity: 0.35;
+.kb-filter.danger .kb-filter-n {
+  background: color-mix(in srgb, var(--tk-danger) 22%, transparent);
+  color: var(--tk-danger);
+}
+
+/* ---------- Arquivados ---------- */
+
+.kb-board.archived {
+  overflow-y: auto;
+}
+
+.kb-archived {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-archived-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.kb-archived-head h3 {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kb-archived-head h3 i {
+  color: var(--nt-muted);
+  font-size: 13px;
+}
+
+.kb-arch-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 9px;
+  background: var(--kb-card);
+}
+
+.kb-arch-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kb-arch-main small {
+  font-size: 11px;
+  color: var(--nt-muted);
+}
+
+/* ---------- Barra de foco (Pomodoro) ---------- */
+
+.kb-focusbar {
+  --ring: var(--pomo-c);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 8px 12px 8px 14px;
+  border-top: 1px solid var(--nt-sep);
+  background: var(--nt-sidebar);
+  animation: kbRise 0.18s ease;
+}
+
+@keyframes kbRise {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.kb-fb-ring {
+  --p: 0;
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--ring) calc(var(--p) * 360deg), rgba(var(--fg-rgb), 0.1) 0);
+  color: var(--ring);
+  font-size: 12px;
+}
+
+.kb-fb-ring::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--nt-sidebar);
+}
+
+.kb-fb-ring i {
+  position: relative;
+}
+
+.kb-focusbar:not(.running) .kb-fb-ring i {
+  opacity: 0.6;
+}
+
+.kb-fb-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-fb-text small {
+  font-size: 11px;
+  color: var(--ring);
+  font-weight: 600;
+}
+
+.kb-fb-text strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--nt-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kb-fb-text:hover strong {
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--fg-rgb), 0.35);
+}
+
+.kb-fb-time {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--nt-text);
+}
+
+.kb-focusbar:not(.running) .kb-fb-time {
+  color: var(--nt-muted);
+}
+
+.kb-fb-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kb-fb-btn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.kb-fb-btn:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text) !important;
+}
+
+.kb-fb-btn.main {
+  width: 34px;
+  height: 34px;
+  margin-right: 4px;
+  background: var(--ring);
+  color: #fff !important;
+}
+
+.kb-fb-btn.main:hover {
+  filter: brightness(1.08);
+  background: var(--ring);
+}
+
+.kb-pop {
+  position: absolute;
+  z-index: 90;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 10px;
+  background: var(--nt-menu-bg);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, calc(0.45 * var(--shade-k)));
+  font-size: 12.5px;
+  animation: popIn 0.12s ease;
+}
+
+.kb-pop-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--nt-muted);
+}
+
+.kb-pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--nt-text-2);
+}
+
+.kb-pop-row.check {
+  justify-content: flex-start;
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.kb-num {
+  width: 62px;
+  padding: 3px 6px;
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 6px;
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  user-select: text;
+}
+
+.kb-num:focus {
+  border-color: var(--tk-accent);
 }
 
 /* ---------- Detalhe ---------- */
@@ -436,10 +810,6 @@ body.tasks-editing .bottom-nav {
   align-items: flex-start;
   gap: 10px;
   padding: 4px 2px 2px;
-}
-
-.tk-d-head .tk-check {
-  margin-top: 3px;
 }
 
 .tk-d-title {
@@ -461,7 +831,6 @@ body.tasks-editing .bottom-nav {
 
 .tk-d-head.done .tk-d-title {
   color: var(--nt-muted);
-  text-decoration: line-through;
 }
 
 .tk-d-card {
@@ -506,11 +875,11 @@ body.tasks-editing .bottom-nav {
 
 .tk-d-row.on,
 .tk-d-row.on .tk-d-row-icon {
-  color: var(--nt-yellow) !important;
+  color: var(--pomo-c) !important;
 }
 
-.tk-d-row.on .fa-sun {
-  color: var(--tk-sun) !important;
+.tk-d-row-icon.kb-ok {
+  color: var(--kb-green);
 }
 
 .tk-d-row-text {
@@ -531,12 +900,12 @@ body.tasks-editing .bottom-nav {
   color: var(--tk-danger);
 }
 
-.tk-d-row-end {
-  font-size: 11px;
-  color: var(--nt-muted);
+.tk-d-row-text small.today {
+  color: var(--tk-warn);
 }
 
-.tk-d-date {
+.tk-d-date,
+.kb-d-select {
   padding: 4px 8px;
   border: 1px solid var(--nt-sep-strong);
   border-radius: 7px;
@@ -548,7 +917,18 @@ body.tasks-editing .bottom-nav {
   user-select: text;
 }
 
-.tk-d-date:focus {
+.kb-d-select {
+  max-width: 55%;
+  cursor: pointer;
+}
+
+.kb-d-select option {
+  background: var(--c-elevated);
+  color: var(--text);
+}
+
+.tk-d-date:focus,
+.kb-d-select:focus {
   border-color: var(--tk-accent);
 }
 
@@ -586,9 +966,95 @@ body.tasks-editing .bottom-nav {
   font-weight: 600;
 }
 
-.tk-chip:disabled {
-  opacity: 0.4;
-  cursor: default;
+.kb-d-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 11px 40px;
+}
+
+.kb-label.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+  background: none;
+  color: var(--nt-text-2) !important;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.kb-label.toggle.on {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--c) 22%, transparent);
+  color: var(--c) !important;
+}
+
+.kb-label.toggle i {
+  font-size: 9px;
+}
+
+.kb-label-input {
+  width: 110px;
+  padding: 3px 8px;
+  border: 1px dashed var(--nt-sep-strong);
+  border-radius: 999px;
+  background: none;
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+  user-select: text;
+}
+
+.kb-label-input:focus {
+  border-style: solid;
+  border-color: var(--tk-accent);
+}
+
+.kb-mini-ring {
+  --p: 0;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: conic-gradient(var(--pomo-c) calc(var(--p) * 360deg), rgba(var(--fg-rgb), 0.12) 0);
+}
+
+.kb-mini-ring::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--nt-bg);
+}
+
+.kb-d-stats {
+  padding: 0 12px 8px 40px;
+  font-size: 11px;
+  color: var(--nt-muted);
+}
+
+.kb-d-mins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0 12px 11px 40px;
+}
+
+.kb-d-min {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--nt-muted);
+}
+
+.kb-d-min .kb-num {
+  width: 56px;
 }
 
 .tk-d-note {
@@ -630,6 +1096,49 @@ body.tasks-editing .bottom-nav {
   color: var(--nt-muted);
 }
 
+.kb-d-foot-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.tk-act {
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tk-act:hover {
+  background: var(--nt-hover);
+  color: var(--nt-text) !important;
+}
+
+.tk-act.danger:hover {
+  color: var(--tk-danger) !important;
+}
+
+/* ---------- Barra lateral (boards) ---------- */
+
+.kb-board-item.drop-before {
+  box-shadow: inset 0 2px 0 var(--tk-accent);
+}
+
+.kb-board-item.drop-after {
+  box-shadow: inset 0 -2px 0 var(--tk-accent);
+}
+
+.kb-board-item.dragging {
+  opacity: 0.4;
+}
+
 /* =========================================================================
    MODO BANDEJA
    ========================================================================= */
@@ -639,130 +1148,256 @@ body:not(.desktop-mode) .tasks-app .nt-editor-pane {
   gap: 8px;
 }
 
-body:not(.desktop-mode) .tk-group {
-  background: var(--nt-surface);
-  border-radius: 11px;
+.kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.kb-head .kb-rename {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.kb-board-pick {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  cursor: pointer;
+}
+
+.kb-board-pick span {
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-body:not(.desktop-mode) .tk-group + .tk-group-label,
-body:not(.desktop-mode) .tk-group + .tk-group {
-  margin-top: 4px;
+.kb-board-pick i {
+  font-size: 11px;
+  color: var(--nt-muted);
 }
 
-body:not(.desktop-mode) .tk-group-label {
-  padding: 10px 4px 6px;
+.tk-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(var(--fg-rgb), 0.06);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tk-seg button {
+  flex: 1 0 auto;
+  min-width: 0;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tk-seg button.active {
+  background: rgba(var(--fg-rgb), 0.13);
+  color: var(--nt-text) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, calc(0.25 * var(--shade-k)));
+}
+
+.tk-seg button.drop-target {
+  box-shadow: inset 0 0 0 1.5px var(--tk-accent);
+}
+
+.kb-seg-name {
+  max-width: 96px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kb-seg-n {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+/* Campo "Adicionar card" no topo da coluna */
+.tk-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 10px;
+  background: rgba(var(--fg-rgb), 0.045);
+  flex-shrink: 0;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tk-add:focus-within {
+  border-color: color-mix(in srgb, var(--tk-accent) 60%, transparent);
+  background: rgba(var(--fg-rgb), 0.06);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tk-accent) 14%, transparent);
+}
+
+.tk-add-icon {
+  color: var(--nt-yellow);
   font-size: 13px;
 }
 
-body:not(.desktop-mode) .tk-item {
-  padding: 9px 8px 9px 10px;
+.kb-add .kb-composer-input {
+  min-height: 0;
+  height: 20px;
+  margin: 8px 0;
+  padding: 0;
+  border: none;
+  background: none;
+  overflow: hidden;
 }
 
-body:not(.desktop-mode) .tk-item + .tk-item::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 40px;
-  right: 0;
-  height: 1px;
-  background: var(--nt-sep);
+body:not(.desktop-mode) .kb-board {
+  overflow-y: auto;
+  margin: 0 -3px;
+  padding: 0 3px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fg-rgb), 0.18) transparent;
 }
 
-body:not(.desktop-mode) .tk-item:active {
-  background: var(--nt-hover);
+body:not(.desktop-mode) .kb-col-body {
+  gap: 6px;
 }
 
-body:not(.desktop-mode) .tk-list > .tk-group:first-child {
-  margin-top: 2px;
+body:not(.desktop-mode) .kb-play {
+  opacity: 0.75;
+}
+
+body:not(.desktop-mode) .kb-archived-head h3 {
+  font-size: 14px;
+}
+
+body:not(.desktop-mode) .kb-arch-item .kb-btn {
+  padding: 0 8px;
 }
 
 body:not(.desktop-mode) .tk-detail {
   padding: 0 2px 8px;
 }
 
+body:not(.desktop-mode) .kb-focusbar {
+  gap: 8px;
+  padding: 6px 6px 6px 8px;
+}
+
+body:not(.desktop-mode) .kb-fb-ring {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+}
+
+body:not(.desktop-mode) .kb-fb-time {
+  font-size: 16px;
+}
+
+body:not(.desktop-mode) .kb-fb-btn {
+  width: 26px;
+  height: 26px;
+  font-size: 11px;
+}
+
+body:not(.desktop-mode) .kb-fb-btn.main {
+  width: 30px;
+  height: 30px;
+  margin-right: 0;
+}
+
+body:not(.desktop-mode) .kb-fb-btn.extra {
+  display: none;
+}
+
 /* =========================================================================
    MODO DESKTOP
    ========================================================================= */
 
-body.desktop-mode .tasks-app .nt-list-pane {
+body.desktop-mode .tasks-app .kb-main {
   flex: 1;
   width: auto;
   min-width: 0;
-  gap: 12px;
-  padding: 20px clamp(18px, 4%, 40px) 0;
   border-right: none;
 }
 
-body.desktop-mode .tasks-app.sidebar-hidden .nt-list-pane {
+body.desktop-mode .tasks-app.sidebar-hidden .kb-main {
   border-left: none;
 }
 
-body.desktop-mode .tk-title {
-  font-size: 26px;
-}
-
-body.desktop-mode .tk-subtitle {
-  font-size: 12.5px;
-}
-
-body.desktop-mode .tk-add {
-  height: 44px;
-  padding-left: 14px;
-}
-
-body.desktop-mode .tk-list {
-  margin: 0 -8px;
-  padding: 0 8px 16px;
-}
-
-body.desktop-mode .tk-group {
+body.desktop-mode .kb-board {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 16px 18px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fg-rgb), 0.2) transparent;
 }
 
-body.desktop-mode .tk-group-label {
-  font-size: 12px;
-  padding: 14px 4px 7px;
-  color: var(--nt-text-2);
+body.desktop-mode .kb-board.archived {
+  display: block;
+  overflow-y: auto;
 }
 
-body.desktop-mode .tk-list > .tk-group:first-child {
-  margin-top: 2px;
+body.desktop-mode .kb-col {
+  flex: 0 0 276px;
+  max-height: 100%;
+  border: 1px solid var(--nt-sep);
+  border-radius: 12px;
+  background: var(--kb-col-bg);
+  transition: box-shadow 0.12s ease, opacity 0.12s ease;
 }
 
-body.desktop-mode .tk-item {
-  padding: 9px 10px 9px 12px;
-  min-height: 46px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: rgba(var(--fg-rgb), 0.04);
-  transition: background 0.12s ease, border-color 0.12s ease;
+body.desktop-mode .kb-col.over {
+  border-color: color-mix(in srgb, var(--tk-danger) 40%, transparent);
 }
 
-body.desktop-mode .tk-item:hover {
-  background: rgba(var(--fg-rgb), 0.07);
+body.desktop-mode .kb-col.dragging {
+  opacity: 0.4;
 }
 
-body.desktop-mode .tk-item.selected {
-  background: var(--nt-yellow-soft);
-  border-color: color-mix(in srgb, var(--tk-accent) 45%, transparent);
+body.desktop-mode .kb-col.drop-before {
+  box-shadow: -7px 0 0 -4px var(--tk-accent);
 }
 
-body.desktop-mode .tk-item-actions .tk-act:not(.active) {
-  opacity: 0;
-  transition: opacity 0.12s ease, background 0.15s ease, color 0.15s ease;
+body.desktop-mode .kb-col.drop-after {
+  box-shadow: 7px 0 0 -4px var(--tk-accent);
 }
 
-body.desktop-mode .tk-item:hover .tk-act,
-body.desktop-mode .tk-item.selected .tk-act {
-  opacity: 1;
+body.desktop-mode .kb-col-body {
+  flex: 0 1 auto;
+  overflow-y: auto;
+  padding: 4px 8px 6px;
 }
 
-/* Detalhe: coluna à direita, só com uma tarefa selecionada */
+/* Detalhe: coluna à direita, só com um card selecionado */
 body.desktop-mode .tasks-app .tk-detail-pane {
-  flex: 0 0 340px;
+  flex: 0 0 360px;
   border-left: 1px solid var(--nt-sep);
   background: var(--nt-sidebar);
   animation: ntSlideIn 0.16s ease;
@@ -779,4 +1414,10 @@ body.desktop-mode .tk-detail {
 body.desktop-mode .tk-d-card,
 body.desktop-mode .tk-d-note {
   background: rgba(var(--fg-rgb), 0.05);
+}
+
+@media (max-width: 1100px) {
+  body.desktop-mode .kb-filters .kb-filter-n {
+    display: none;
+  }
 }

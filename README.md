@@ -1,9 +1,9 @@
 <div align="center">
 
-# ⚡ TodoRS
+# ⚡ Dev Suite
 
 **Um aplicativo de produtividade desktop moderno, ultraleve e minimalista.**  
-*Gerencie suas tarefas diárias, capture notas rápidas e mantenha o foco com o Timer Pomodoro integrado.*
+*Organize suas tarefas num board kanban, capture notas rápidas e mantenha o foco com o Timer Pomodoro integrado.*
 
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-blue?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
@@ -16,11 +16,9 @@
 
 ## ✨ Recursos Principais
 
-- ☀️ **Meu Dia**: Foco absoluto nas tarefas agendadas para hoje. Tarefas concluídas de outros dias vão automaticamente para o Histórico para manter sua visualização limpa.
-- 📜 **Histórico**: Acompanhe todas as suas tarefas (pendentes e concluídas de qualquer data) em um registro completo.
-- ⏱️ **Timer Pomodoro**: Alterne entre ciclos de foco e pausa com alarme sonoro sintetizado (*WebAudio API*), vinculado diretamente a cada tarefa.
+- 🗂️ **Board Kanban**: Vários boards com colunas editáveis (status, cor, limite WIP), cards com prazo, etiquetas e anotação, arrastar e soltar, filtros e arquivados.
+- ⏱️ **Pomodoro nos cards**: ▶ no card inicia o foco (e leva o card para "Fazendo"); barra de foco com pausa, pausa longa e contagem de 🍅 e tempo focado por card.
 - 📝 **Notas Rápidas**: Crie, edite e organize anotações rápidas em um grid visual intuitivo.
-- 🗓️ **Reagendamento em Lote**: Mova facilmente todas as suas tarefas pendentes para o próximo dia ou para uma data escolhida com apenas um clique.
 - 🪟 **Janela Frameless & System Tray**: Interface limpa sem bordas de sistema, com suporte a minimizar para a bandeja do sistema (System Tray).
 - ⚙️ **Configurações de Sistema**: Opções para iniciar junto com o sistema operacional e iniciar minimizado na bandeja.
 

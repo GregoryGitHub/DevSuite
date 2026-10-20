@@ -3,6 +3,7 @@ import { formatJson } from "../utils/jsonRepair.js";
 import { el } from "../utils/dom.js";
 import { codeEditor } from "./codeEditor.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
+import { registerApp } from "../appLifecycle.js";
 
 // Formatter JSON: um único campo. "Formatar" diagnostica o texto (escapado, minificado,
 // quebrado...), repara com o pipeline de utils/jsonRepair.js e substitui o conteúdo no lugar.
@@ -75,6 +76,7 @@ function writeStore(key, value) {
 function persistSoon() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
+    persistTimer = 0;
     writeStore(STORE_TEXT, input.value.length <= PERSIST_LIMIT ? input.value : null);
   }, 500);
 }
@@ -427,4 +429,20 @@ export function initJsonFormatter() {
 
   scheduleRender();
   liveDiagnose();
+
+  // O texto e as opções ficam no localStorage, que as janelas compartilham.
+  registerApp("json", {
+    flush: () => {
+      if (!persistTimer) return;
+      clearTimeout(persistTimer);
+      persistTimer = 0;
+      writeStore(STORE_TEXT, input.value.length <= PERSIST_LIMIT ? input.value : null);
+    },
+    reload: () => {
+      loadOptions();
+      editor.setValue(readStore(STORE_TEXT) || "");
+      scheduleRender();
+      liveDiagnose();
+    },
+  });
 }

@@ -26,7 +26,7 @@ export const AUTH_TYPES = [
   { id: "basic", label: "Basic Auth" },
   { id: "apikey", label: "API Key" },
 ];
-export const USER_AGENT = "TodoRS-HTTP/0.2";
+export const USER_AGENT = "DevSuite-HTTP/0.2";
 export const DEFAULT_SETTINGS = { timeout_ms: 30000, use_cookies: true, history_limit: 100 };
 
 let uidCounter = 0;

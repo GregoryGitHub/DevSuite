@@ -209,6 +209,12 @@ pub struct SchemaColumn {
     pub default: String,
     /// Nome da constraint de DEFAULT (para trocá-la ou remover a coluna).
     pub default_name: String,
+    /// Coluna calculada PERSISTED.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub persisted: bool,
+    /// Collation da coluna quando difere da padrão do banco (vazio = padrão).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub collation: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -246,6 +252,34 @@ pub struct SchemaFk {
 pub struct SchemaCheck {
     pub name: String,
     pub definition: String,
+}
+
+/// O que entra no script do banco inteiro ("Gerar DDL do banco").
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct DbScriptOptions {
+    /// Schemas incluídos; vazio = todos.
+    pub schemas: Vec<String>,
+    pub types: bool,
+    pub sequences: bool,
+    pub tables: bool,
+    pub indexes: bool,
+    pub foreign_keys: bool,
+    pub views: bool,
+    pub functions: bool,
+    pub procedures: bool,
+    pub triggers: bool,
+    pub synonyms: bool,
+    /// Protege cada objeto (IF NOT EXISTS) para rodar sobre um banco já criado.
+    pub if_not_exists: bool,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct DbScript {
+    pub sql: String,
+    /// Objetos no script (schemas, tipos, tabelas, índices, FKs, módulos...).
+    pub objects: u32,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -287,6 +321,11 @@ pub trait Session: Send {
     /// (MongoDB) ficam com o padrão.
     async fn table_schema(&mut self, _schema: &str, _name: &str) -> DbResult<TableSchema> {
         Err("Edição de estrutura não disponível para este banco".into())
+    }
+
+    /// Script de criação do banco inteiro, na ordem de dependência.
+    async fn database_script(&mut self, _opts: &DbScriptOptions) -> DbResult<DbScript> {
+        Err("Script do banco não disponível para este banco".into())
     }
 
     async fn begin(&mut self) -> DbResult<u32>;
