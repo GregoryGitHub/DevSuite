@@ -345,6 +345,15 @@ body.desktop-mode .compact-only {
   box-shadow: inset 0 0 0 2px var(--nt-yellow);
 }
 
+/* Reordenar pastas: linha onde a pasta arrastada vai entrar. */
+.nt-folder.drop-before {
+  box-shadow: inset 0 2px 0 var(--nt-yellow);
+}
+
+.nt-folder.drop-after {
+  box-shadow: inset 0 -2px 0 var(--nt-yellow);
+}
+
 .nt-new-folder {
   display: flex;
   align-items: center;
@@ -2368,4 +2377,190 @@ body.desktop-mode .nt-trash-banner {
     max-width: 100%;
     height: auto;
   }
+}
+
+/* ---------- Arquivo .md de fora das Notas (mdFile.js) e prévia do Espaço no Explorer ---------- */
+
+body.md-window .nt-tb-sidebar,
+body.md-window .nt-tb-list,
+body.md-window .nt-sidebar,
+body.md-window .nt-list-pane,
+body.md-window .nt-graph-pane,
+body.md-window .compact-only,
+body.md-window #nt-editor-date,
+body.md-window #nt-props,
+body.md-window #nt-backlinks,
+body.md-window #nt-trash-banner,
+body.md-window #nt-editor-empty {
+  display: none !important;
+}
+
+body.md-window .nt-tb-editor {
+  border-left: none;
+  padding-left: 16px;
+}
+
+.md-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-right: 8px;
+  font-size: 13px;
+}
+
+.md-title > i {
+  align-self: center;
+  color: var(--nt-muted);
+}
+
+.md-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--nt-text);
+}
+
+.md-status {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--nt-muted);
+}
+
+.md-status.ok {
+  color: var(--nt-green, var(--nt-muted));
+}
+
+.md-status.bad {
+  color: var(--c-danger-text);
+}
+
+.md-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 16px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--nt-yellow-soft);
+  color: var(--nt-text-2);
+  font-size: 12px;
+}
+
+.md-banner[hidden] {
+  display: none;
+}
+
+.md-banner > span {
+  flex: 1;
+}
+
+.md-banner button {
+  background: none;
+  border: none;
+  color: var(--nt-yellow);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* Prévia: só leitura, sem formatação nem minimizar/maximizar. */
+body.md-preview .nt-tb-group,
+body.md-preview [data-popover],
+body.md-preview .win-btn[data-action="minimize"],
+body.md-preview .win-btn[data-action="maximize"] {
+  display: none !important;
+}
+
+body.md-preview .nt-editor-scroll:focus {
+  outline: none;
+}
+
+.md-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+/* ---------- Buscar na nota (Ctrl+F, noteFind.js) ---------- */
+
+.nt-find {
+  position: absolute;
+  right: 18px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(340px, calc(100% - 36px));
+  padding: 4px 4px 4px 10px;
+  background: var(--nt-menu-bg);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--nt-sep-strong);
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, calc(0.4 * var(--shade-k)));
+  animation: ntPop 0.12s ease;
+}
+
+.nt-find[hidden] {
+  display: none;
+}
+
+.nt-find > .fa-magnifying-glass {
+  color: var(--nt-muted);
+  font-size: 12px;
+}
+
+.nt-find-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 2px;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--nt-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.nt-find-count {
+  flex-shrink: 0;
+  color: var(--nt-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nt-find.empty .nt-find-count {
+  color: #e5484d;
+}
+
+.nt-find-btn {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--nt-text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nt-find-btn:hover {
+  background: var(--nt-hover);
+}
+
+::highlight(nt-find) {
+  background-color: rgba(245, 197, 24, 0.38);
+  color: inherit;
+}
+
+::highlight(nt-find-cur) {
+  background-color: #f59e0b;
+  color: #1d1d1f;
 }

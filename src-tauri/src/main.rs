@@ -3,11 +3,14 @@
 mod app_windows;
 mod db;
 mod http;
+mod md_files;
 mod note_images;
 mod note_pdf;
 mod notes_db;
 mod notes_vault;
 mod persist;
+#[cfg(windows)]
+mod quicklook;
 mod rabbit;
 
 use std::fs;
@@ -50,6 +53,13 @@ struct AppSettings {
     /// Cofres já usados (troca rápida na barra lateral das Notas).
     #[serde(default)]
     vaults: Vec<String>,
+    /// Windows: Espaço sobre um .md no Explorer abre a prévia (quicklook.rs).
+    #[serde(default = "default_true")]
+    md_quicklook: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_notes_storage() -> String {
@@ -152,6 +162,8 @@ fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), Str
     persist::write(path, json);
     // As outras janelas (apps desatachados) acompanham tema, Zettelkasten, cofre etc.
     let _ = app.emit("settings-changed", &settings);
+    #[cfg(windows)]
+    quicklook::set_enabled(&app, settings.md_quicklook);
 
     // Só mexe no autostart quando ele muda (o tema, por exemplo, também salva settings).
     {
@@ -427,7 +439,12 @@ fn main() {
     }
     tauri::Builder::default()
         // Primeiro plugin: uma 2ª execução (ex.: atalho fixado "--app=http") só avisa esta.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // Dois cliques num .md (associação de arquivo): abre a janela daquele arquivo.
+            if let Some(path) = md_files::md_arg(&argv, std::path::Path::new(&cwd)) {
+                md_files::open_file_later(app, path);
+                return;
+            }
             match app_windows::app_arg(&argv) {
                 Some(id) => {
                     let app = app.clone();
@@ -497,10 +514,20 @@ fn main() {
             note_images::save_note_image,
             note_images::import_note_image,
             note_images::export_note_images,
+            md_files::md_file_read,
+            md_files::md_file_write,
+            md_files::md_file_save_image,
+            md_files::md_file_import_image,
+            md_files::md_open,
+            md_files::md_reveal,
+            md_files::md_window_close,
+            md_files::md_preview_ready,
+            md_files::md_preview_hide,
             db::load_db_data,
             db::save_db_data,
             db::db_set_password,
             db::db_has_password,
+            db::db_get_password,
             db::db_forget_secrets,
             db::db_test_connection,
             db::db_connect,
@@ -548,8 +575,9 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                // Desatachada: grava e volta para a principal. Principal: só se esconde.
-                if !app_windows::close_requested(window.app_handle(), window) {
+                // Desatachada: grava e volta para a principal. Arquivo .md: grava e fecha.
+                // Principal: só se esconde.
+                if !md_files::close_requested(window.app_handle(), window) && !app_windows::close_requested(window.app_handle(), window) {
                     let _ = window.hide();
                 }
             }
@@ -602,7 +630,9 @@ fn main() {
             // Atalho fixado de um app ("--app=http"): abre só ele; a principal fica na bandeja.
             let args: Vec<String> = std::env::args().collect();
             let launch_app = app_windows::app_arg(&args);
-            if !settings.start_minimized && launch_app.is_none() {
+            // Aberto por dois cliques num .md: só a janela do arquivo (a principal fica na bandeja).
+            let launch_md = md_files::md_arg(&args, &std::env::current_dir().unwrap_or_default());
+            if !settings.start_minimized && launch_app.is_none() && launch_md.is_none() {
                 show_window(app.handle(), None);
             }
             // Apps que estavam soltos ao sair reabrem nas suas janelas.
@@ -615,6 +645,11 @@ fn main() {
             if let Some(id) = launch_app {
                 app_windows::open(app.handle(), id, true)?;
             }
+            if let Some(path) = launch_md {
+                md_files::open_file(app.handle(), &path)?;
+            }
+            #[cfg(windows)]
+            quicklook::set_enabled(app.handle(), settings.md_quicklook);
             if settings.autostart {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || migrate_autostart(&handle));

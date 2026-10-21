@@ -25,12 +25,23 @@ function blobToDataUrl(blob) {
   });
 }
 
+// Where images go: the app's image store (default) or, in a .md file window (mdFile.js),
+// next to the file. save(bytes, ext) / copy(path) resolve to the image URL.
+let target = {
+  save: (bytes, ext) => saveNoteImageApi(bytes, ext).then(noteImageUrl),
+  copy: (path) => importNoteImageApi(path).then(noteImageUrl),
+};
+
+export function setImageTarget(t) {
+  target = t;
+}
+
 /** Stores an image blob and returns { src, width, height }. */
 export async function storeImageBlob(blob) {
   const [size, src] = await Promise.all([
     imageSize(blob),
     hasTauri
-      ? blob.arrayBuffer().then((buf) => saveNoteImageApi(new Uint8Array(buf), EXT_BY_TYPE[blob.type] || "")).then(noteImageUrl)
+      ? blob.arrayBuffer().then((buf) => target.save(new Uint8Array(buf), EXT_BY_TYPE[blob.type] || ""))
       : blobToDataUrl(blob), // browser preview without the Rust side
   ]);
   return { src, ...size };
@@ -38,7 +49,7 @@ export async function storeImageBlob(blob) {
 
 /** Copies an image file from disk (Markdown import) and returns { src, width, height }. */
 export async function storeImageFile(path) {
-  const src = noteImageUrl(await importNoteImageApi(path));
+  const src = await target.copy(path);
   const size = await new Promise((resolve) => {
     const img = new Image();
     img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });

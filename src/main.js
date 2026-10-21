@@ -1,6 +1,7 @@
 import { state } from "./js/state.js";
 import { loadSettingsApi, loadHttpDataApi, loadDbDataApi } from "./js/api.js";
-import { SOLO_APP } from "./js/windowContext.js";
+import { SOLO_APP, MD_FILE, MD_PREVIEW } from "./js/windowContext.js";
+import { initMdFile } from "./js/components/mdFile.js";
 import { initTasks, reloadKanban } from "./js/components/tasks.js";
 import { initNotes, loadNotes } from "./js/components/notes.js";
 import { initHttp, setHttpData } from "./js/components/http.js";
@@ -67,6 +68,11 @@ function initGlobalShortcutListeners() {
 
 function main() {
   initTheme();
+  // Janela de um arquivo .md (ou a prévia do Espaço no Explorer): só o editor.
+  if (MD_FILE || MD_PREVIEW) {
+    initMdFile().catch((e) => console.error("md init failed", e));
+    return;
+  }
   if (runs("tasks")) initTasks();
   if (runs("notes")) initNotes();
   if (runs("http")) initHttp();

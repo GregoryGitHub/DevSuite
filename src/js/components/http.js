@@ -26,7 +26,7 @@ import {
 } from "../utils/httpModel.js";
 import { SNIPPETS, parseCurl, exportPostman, exportPostmanEnvironment } from "../utils/httpConvert.js";
 import { runScript } from "../utils/httpScripts.js";
-import { descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, removeFolderTree } from "../utils/folderTree.js";
+import { descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, removeFolderTree, placeFolder as placeFolderNear } from "../utils/folderTree.js";
 import { formatNoteListDate, formatNoteFullDate, noteGroupLabel } from "../utils/date.js";
 import { initHttpEditor, loadRequest, renderResponse, refreshVariables, refreshRequestTab, focusUrl, focusName } from "./httpEditor.js";
 import { el, icon, attachVarAutocomplete } from "./httpWidgets.js";
@@ -581,13 +581,7 @@ function moveFolder(coll, folderId, parentId) {
 
 /** Reordena: `folderId` vira irmã de `targetId`, logo antes/depois dela (a ordem do array é a ordem entre irmãs). */
 function placeFolder(coll, folderId, targetId, after) {
-  const folder = coll.folders.find((f) => f.id === folderId);
-  const target = coll.folders.find((f) => f.id === targetId);
-  const parentId = target?.parent_id || 0;
-  if (!folder || !target || folder === target || !canMoveFolder(coll.folders, folderId, parentId)) return;
-  folder.parent_id = parentId;
-  coll.folders.splice(coll.folders.indexOf(folder), 1);
-  coll.folders.splice(coll.folders.indexOf(target) + (after ? 1 : 0), 0, folder);
+  if (!placeFolderNear(coll.folders, folderId, targetId, after)) return;
   saveSoon();
   renderList();
 }

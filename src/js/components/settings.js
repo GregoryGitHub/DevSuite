@@ -9,6 +9,9 @@ const bottomNav = document.getElementById("bottom-nav");
 const settingAutostart = document.getElementById("setting-autostart");
 const settingStartMinimized = document.getElementById("setting-start-minimized");
 const settingZettelkasten = document.getElementById("setting-zettelkasten");
+const settingMdQuicklook = document.getElementById("setting-md-quicklook");
+// Prévia de .md com Espaço: só no Windows (hook no Explorer, src-tauri/src/quicklook.rs).
+const IS_WINDOWS = /Windows/i.test(navigator.userAgent);
 const settingsBar = document.getElementById("settings-bar");
 
 // Barra do modo expandido (botões de janela).
@@ -36,6 +39,12 @@ export function initSettings() {
     document.dispatchEvent(new CustomEvent("zettelkastenchange"));
   });
 
+  document.getElementById("setting-md-quicklook-row").hidden = !IS_WINDOWS;
+  settingMdQuicklook.addEventListener("change", () => {
+    state.settings.md_quicklook = settingMdQuicklook.checked;
+    saveSettingsApi(state.settings);
+  });
+
   settingsBar.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action]");
     if (btn) BAR_ACTIONS[btn.dataset.action]?.();
@@ -56,6 +65,7 @@ export function updateSettingsUI() {
   settingAutostart.checked = !!state.settings.autostart;
   settingStartMinimized.checked = !!state.settings.start_minimized;
   settingZettelkasten.checked = !!state.settings.zettelkasten;
+  settingMdQuicklook.checked = state.settings.md_quicklook !== false;
 }
 
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

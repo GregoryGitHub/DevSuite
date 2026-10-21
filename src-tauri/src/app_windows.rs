@@ -61,6 +61,11 @@ fn find(id: &str) -> Option<&'static AppDef> {
     APPS.iter().find(|a| a.id == id)
 }
 
+/// PNG do ícone de um app (ex.: as janelas de .md usam o do Notas).
+pub fn app_png(id: &str) -> Option<&'static [u8]> {
+    find(id).map(|a| a.png)
+}
+
 fn label_of(id: &str) -> String {
     format!("{LABEL_PREFIX}{id}")
 }

@@ -99,6 +99,8 @@ pub enum ExecEvent {
     Docs { index: usize, docs: Vec<Value> },
     /// Fim de um result set.
     ResultEnd { index: usize, row_count: u64, truncated: bool },
+    /// Fim da execução (último evento, enviado pelo comando mesmo com erro ou cancelamento).
+    Done,
 }
 
 /// Resumo devolvido pelo comando de execução.

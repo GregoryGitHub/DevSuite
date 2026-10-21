@@ -179,13 +179,21 @@ export function parseConnectionString(text) {
     hostPart = jdbc[1];
     s = jdbc[2];
   }
-  for (const part of s.split(";")) {
-    const i = part.indexOf("=");
-    if (i < 0) continue;
-    const key = part.slice(0, i).trim().toLowerCase().replace(/\s+/g, " ");
-    let value = part.slice(i + 1).trim();
-    if (/^(["']).*\1$/.test(value)) value = value.slice(1, -1);
-    kv[key] = value;
+  // chave=valor;... — valor entre aspas pode ter ; (aspas dobradas = aspas literais).
+  const pairRe = /\s*([^=;]+?)\s*=\s*(?:"((?:[^"]|"")*)"|'((?:[^']|'')*)'|([^;]*))\s*(?:;|$)/gy;
+  for (let pos = 0; pos < s.length; ) {
+    pairRe.lastIndex = pos;
+    const m = pairRe.exec(s);
+    if (!m) {
+      // Trecho sem "=": pula até o próximo ";".
+      const next = s.indexOf(";", pos);
+      if (next < 0) break;
+      pos = next + 1;
+      continue;
+    }
+    pos = pairRe.lastIndex;
+    const key = m[1].trim().toLowerCase().replace(/\s+/g, " ");
+    kv[key] = m[2] !== undefined ? m[2].replace(/""/g, '"') : m[3] !== undefined ? m[3].replace(/''/g, "'") : m[4].trim();
   }
   const pick = (...keys) => keys.map((k) => kv[k]).find((v) => v !== undefined);
   const server = hostPart || pick("server", "data source", "address", "addr", "network address", "servername") || "";
@@ -226,6 +234,49 @@ export function parseConnectionString(text) {
   if (timeout && /^\d+$/.test(timeout)) patch.connect_timeout_s = Number(timeout);
   if (!Object.keys(patch.auth).length) delete patch.auth;
   return { patch, password: pick("password", "pwd") };
+}
+
+/** Valor de connection string ADO.NET: entre aspas quando tem ; = aspas ou espaço nas pontas. */
+function adoValue(v) {
+  const s = String(v);
+  if (!/[;="']|^\s|\s$/.test(s)) return s;
+  return s.includes('"') ? `'${s.replace(/'/g, "''")}'` : `"${s}"`;
+}
+
+/**
+ * Connection string para usar em outro software: ADO.NET (SQL Server) ou a URI do MongoDB.
+ * `password` (opcional) entra na string; sem ela, nenhum segredo sai daqui.
+ */
+export function buildConnectionString(c, password) {
+  if (isMongo(c)) {
+    const m = /^(mongodb(?:\+srv)?:\/\/)(?:[^@/]*@)?([^/?]*)(\/[^?]*)?(\?.*)?$/i.exec(c.uri.trim());
+    if (!m) return c.uri.trim();
+    const [, scheme, hosts, path = "", query = ""] = m;
+    const user = c.auth.user.trim();
+    const auth = user ? `${encodeURIComponent(user)}${password ? `:${encodeURIComponent(password)}` : ""}@` : "";
+    let q = query;
+    if (c.tls_insecure && !/[?&]tlsAllowInvalidCertificates=/i.test(q)) q += `${q ? "&" : "?"}tlsAllowInvalidCertificates=true`;
+    // O banco padrão do diálogo vale mais que o do caminho.
+    const db = c.database.trim() ? `/${encodeURIComponent(c.database.trim())}` : path || (q ? "/" : "");
+    return `${scheme}${auth}${hosts}${db}${q}`;
+  }
+  const host = c.host.trim();
+  const instance = c.instance.trim();
+  const server = `tcp:${host}${instance ? `\\${instance}` : ""}${c.port && (!instance || c.port !== 1433) ? `,${c.port}` : ""}`;
+  const parts = [["Server", server]];
+  if (c.database.trim()) parts.push(["Initial Catalog", c.database.trim()]);
+  if (c.auth.kind === "entra") {
+    parts.push(["Authentication", "Active Directory Interactive"]);
+    if (c.auth.user.trim()) parts.push(["User ID", c.auth.user.trim()]);
+  } else {
+    if (c.auth.user.trim()) parts.push(["User ID", c.auth.user.trim()]);
+    if (password) parts.push(["Password", password]);
+  }
+  parts.push(["Encrypt", { on: "True", strict: "Strict", off: "False" }[c.encrypt] || "True"]);
+  parts.push(["TrustServerCertificate", c.trust_server_certificate ? "True" : "False"]);
+  if (c.read_intent) parts.push(["ApplicationIntent", "ReadOnly"]);
+  parts.push(["Connect Timeout", c.connect_timeout_s]);
+  return parts.map(([k, v]) => `${k}=${adoValue(v)}`).join(";") + ";";
 }
 
 /** Host de uma conexão MongoDB que é Atlas/Cosmos (para o rótulo). */

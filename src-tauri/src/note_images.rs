@@ -106,6 +106,11 @@ fn valid_name(name: &str) -> bool {
 }
 
 fn store(app: &tauri::AppHandle, bytes: &[u8], hint_ext: &str) -> Result<String, String> {
+    store_in(&images_dir(app)?, bytes, hint_ext)
+}
+
+/// Grava a imagem em `dir` com o nome do hash do conteúdo (reaproveita se já existe).
+pub fn store_in(dir: &Path, bytes: &[u8], hint_ext: &str) -> Result<String, String> {
     if bytes.is_empty() {
         return Err("Imagem vazia.".into());
     }
@@ -119,7 +124,8 @@ fn store(app: &tauri::AppHandle, bytes: &[u8], hint_ext: &str) -> Result<String,
     bytes.hash(&mut h);
     let name = format!("{:016x}{:x}.{ext}", h.finish(), bytes.len());
 
-    let path = images_dir(app)?.join(&name);
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let path = dir.join(&name);
     if !path.exists() {
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
@@ -222,8 +228,16 @@ pub fn vault_file(root: &Path, encoded: &str) -> Option<PathBuf> {
 /// Responde `noteimg://localhost/<nome>` (ou `http://noteimg.localhost/<nome>` no Windows).
 pub fn serve(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let name = request.uri().path().trim_start_matches('/');
-    if let Some(encoded) = name.strip_prefix("v/") {
-        let path = vault_root().and_then(|root| vault_file(&root, encoded));
+    // `v/<caminho>` = arquivo do cofre; `f/<token>/<caminho>` = ao lado de um .md aberto fora das
+    // Notas (md_files.rs). Os dois só servem arquivos dentro da pasta de origem.
+    let local = if let Some(encoded) = name.strip_prefix("v/") {
+        Some(vault_root().and_then(|root| vault_file(&root, encoded)))
+    } else if let Some((token, encoded)) = name.strip_prefix("f/").and_then(|r| r.split_once('/')) {
+        Some(crate::md_files::dir_of_token(token).and_then(|root| vault_file(&root, encoded)))
+    } else {
+        None
+    };
+    if let Some(path) = local {
         let ext = path
             .as_ref()
             .and_then(|p| p.extension())

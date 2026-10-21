@@ -44,6 +44,27 @@ export function vaultImageRel(src) {
   }
 }
 
+// A .md opened outside the notes (md_files.rs): images next to the file are served as
+// noteimg://localhost/f/<token>/<path relative to the file>. The path is kept as written
+// (even "../x.png", which the Rust side refuses to serve) so saving writes it back unchanged.
+const FILE_URL_RE = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)f\/([0-9a-f]+)\/(.+)$/i;
+
+export function fileImageUrl(token, rel) {
+  // One encoded segment ("/" = %2F): the browser would resolve "a/../b" in the URL itself.
+  return `${IMG_BASE}f/${token}/${encodeURIComponent(rel)}`;
+}
+
+/** Path relative to the .md file of a file image URL, or null. */
+export function fileImageRel(src) {
+  const m = FILE_URL_RE.exec(src || "");
+  if (!m) return null;
+  try {
+    return m[2].split("/").map(decodeURIComponent).join("/");
+  } catch {
+    return null;
+  }
+}
+
 /** File name of an image stored by the app, or null for remote/data URLs. */
 export function localImageName(src) {
   const m = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)([a-z0-9]+\.[a-z0-9]+)$/i.exec(src || "");
@@ -57,7 +78,7 @@ export function noteImageNames(html) {
 }
 
 function isAllowedImageSrc(src) {
-  return !!localImageName(src) || !!vaultImageRel(src) || /^https?:\/\//i.test(src) || /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,/i.test(src);
+  return !!localImageName(src) || !!vaultImageRel(src) || !!fileImageRel(src) || /^https?:\/\//i.test(src) || /^data:image\/(png|jpe?g|gif|webp|bmp|avif);base64,/i.test(src);
 }
 
 /** HTML for an image; width/height keep the layout stable while the file loads. */

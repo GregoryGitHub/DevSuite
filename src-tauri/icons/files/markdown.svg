@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><!-- Marca Markdown (M↓): Dustin Curtis, domínio público - https://github.com/dcurtis/markdown-mark -->
+<defs>
+<linearGradient id="fold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5c518"/><stop offset="1" stop-color="#c48f00"/></linearGradient>
+<linearGradient id="page" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef0f3"/></linearGradient>
+</defs>
+<!-- sombra -->
+<path fill="#000" fill-opacity="0.18" d="M248 92H664L868 296V916a64 64 0 0 1-64 64H248a64 64 0 0 1-64-64V156a64 64 0 0 1 64-64Z"/>
+<!-- folha -->
+<path fill="url(#page)" stroke="#c9ced6" stroke-width="14" stroke-linejoin="round" d="M236 64H648L852 268V896a64 64 0 0 1-64 64H236a64 64 0 0 1-64-64V128a64 64 0 0 1 64-64Z"/>
+<!-- canto dobrado -->
+<path fill="url(#fold)" d="M648 64V204a64 64 0 0 0 64 64H852Z"/>
+<!-- marca M↓ -->
+<g transform="translate(244 404) scale(2.6)">
+<rect x="7" y="7" width="194" height="114" rx="16" fill="none" stroke="#2b2f36" stroke-width="14"/>
+<path fill="#2b2f36" d="M30 98V30h20l20 25 20-25h20v68H90V59L70 84 50 59v39zm125 0l-30-33h20V30h20v35h20z"/>
+</g>
+<!-- linha de texto -->
+<rect x="300" y="796" width="424" height="40" rx="20" fill="#c9ced6"/>
+</svg>

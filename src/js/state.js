@@ -2,7 +2,7 @@ export const state = {
   kanban: null, // documento de kanban.json normalizado por normalizeKanban (board das Tarefas)
   notes: [],
   folders: [], // pastas criadas pelo usuário; a pasta padrão "Notas" (id 0) é implícita
-  settings: { autostart: false, start_minimized: false, theme: "system", zettelkasten: false, notes_storage: "sqlite", vault_path: "", vaults: [] },
+  settings: { autostart: false, start_minimized: false, theme: "system", zettelkasten: false, notes_storage: "sqlite", vault_path: "", vaults: [], md_quicklook: true },
   tasksUI: {
     selectedId: null, // card aberto no detalhe
     pane: "list", // modo bandeja: "list" (board) | "editor" (detalhe do card)

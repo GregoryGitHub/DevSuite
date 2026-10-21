@@ -182,6 +182,23 @@ export function importNoteImageApi(path) {
   return invoke("import_note_image", { path });
 }
 
+// ---------- Arquivos .md fora das Notas (src-tauri/src/md_files.rs) ----------
+
+export const mdApi = {
+  /** { text, mtime, token, name } — token = pasta do arquivo (imagens). */
+  read: (path) => invoke("md_file_read", { path }),
+  /** { mtime, conflict }: com conflito nada é gravado. */
+  write: (path, text, expectedMtime) => invoke("md_file_write", { path, text, expectedMtime }),
+  /** Caminho relativo ao arquivo (attachments/<hash>.<ext>). */
+  saveImage: (token, bytes, ext = "") => invoke("md_file_save_image", bytes, { headers: { "x-token": token, "x-ext": ext } }),
+  importImage: (token, path) => invoke("md_file_import_image", { token, path }),
+  open: (path) => invoke("md_open", { path }),
+  reveal: (path) => invoke("md_reveal", { path }),
+  closeWindow: () => invoke("md_window_close"),
+  previewReady: () => invoke("md_preview_ready"),
+  previewHide: () => invoke("md_preview_hide"),
+};
+
 /** Copia imagens para `dir`; `local` = das imagens do banco local mesmo com um cofre aberto. */
 export function exportNoteImagesApi(names, dir, local = false) {
   return invoke("export_note_images", { names, dir, local });
@@ -235,12 +252,22 @@ export const dbApi = {
   /** Script do banco inteiro na ordem de criação: { sql, objects, warnings }. */
   databaseScript: (target, options) => invoke("db_database_script", { target, options }),
   tableSchema: (target, schema, name) => invoke("db_table_schema", { target, schema, name }),
-  /** `onEvent` recebe ResultStart/Rows/ResultEnd enquanto a consulta roda; resolve com o resumo. */
-  execute(target, queryId, sql, { maxRows = null, onEvent }) {
+  /** Senha do cofre (null = não tem). */
+  getPassword: (connId) => invoke("db_get_password", { connId }),
+  /**
+   * `onEvent` recebe ResultStart/Rows/ResultEnd enquanto a consulta roda; resolve com o resumo
+   * só depois do evento "done": a resposta do invoke pode chegar antes das últimas linhas.
+   */
+  async execute(target, queryId, sql, { maxRows = null, onEvent }) {
     requireTauri();
     const channel = new window.__TAURI__.core.Channel();
-    channel.onmessage = onEvent;
-    return invoke("db_execute", { target, queryId, sql, maxRows, onEvent: channel });
+    let finished;
+    const done = new Promise((resolve) => (finished = resolve));
+    channel.onmessage = (ev) => (ev.type === "done" ? finished() : onEvent(ev));
+    const summary = await invoke("db_execute", { target, queryId, sql, maxRows, onEvent: channel });
+    // Segurança: não trava se o evento se perder.
+    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 3000))]);
+    return summary;
   },
   cancel: (queryId) => invoke("db_cancel", { queryId }).catch(() => {}),
   tx: (target, action) => invoke("db_tx", { target, action }),

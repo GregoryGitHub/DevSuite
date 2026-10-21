@@ -48,7 +48,8 @@ const fmtCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k
 
 /**
  * ctx: { data, conn(id), status(connId), ensureConnected(conn), disconnect(conn), openTable, openDdl,
- *        openConsole, editConnection, deleteConnection, duplicateConnection, showMenu, copy, saveUi, toast,
+ *        openConsole, editConnection, deleteConnection, duplicateConnection, showMenu, copy,
+ *        copyConnectionString(conn, { withPassword }), saveUi, toast,
  *        schema: { modify, newTable, rename, drop, truncate, renameItem, dropItem } }
  */
 export function createExplorer(ctx, { treeEl, searchEl }) {
@@ -407,7 +408,8 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
         "sep",
         { label: "Editar conexão…", icon: "fa-solid fa-pen", run: () => ctx.editConnection(conn) },
         { label: "Duplicar", icon: "fa-regular fa-copy", run: () => ctx.duplicateConnection(conn) },
-        { label: isMongo(conn) ? "Copiar connection string" : "Copiar servidor", icon: "fa-regular fa-clipboard", run: () => ctx.copy(isMongo(conn) ? conn.uri : conn.host) },
+        { label: "Copiar connection string", icon: "fa-regular fa-clipboard", run: () => ctx.copyConnectionString(conn) },
+        isMongo(conn) || conn.auth.kind === "sql" ? { label: "Copiar connection string com senha", icon: "fa-solid fa-key", run: () => ctx.copyConnectionString(conn, { withPassword: true }) } : null,
         conn.auth.kind === "entra" ? { label: "Sair da conta Microsoft", icon: "fa-solid fa-right-from-bracket", run: () => ctx.signOut(conn) } : null,
         "sep",
         { label: "Mover para cima", icon: "fa-solid fa-arrow-up", disabled: connIndex(conn.id) === 0, run: () => moveConn(conn.id, connIndex(conn.id) - 1) },

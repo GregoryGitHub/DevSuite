@@ -36,7 +36,7 @@ function check(label, checked, onchange, hint = "") {
  * Cria/edita uma conexão. onSave(conn, password) — password undefined = não mudou.
  * hasPassword: se já existe senha salva no cofre.
  */
-export function connectionDialog(initial, { isNew, hasPassword = false, onSave, onDelete }) {
+export function connectionDialog(initial, { isNew, hasPassword = false, onSave, onDelete, onCopy }) {
   const c = normalizeConnection(structuredClone(initial));
   let password; // undefined = mantém a salva
   const status = el("div.db-test", { hidden: true });
@@ -154,10 +154,11 @@ export function connectionDialog(initial, { isNew, hasPassword = false, onSave, 
   const flavorBadge = el("span.db-kind-badge");
   const uriInput = el("textarea.hx-code-input.db-connstr", {
     rows: 2,
-    value: c.uri,
     placeholder: "mongodb+srv://usuario@cluster0.xxxxx.mongodb.net/  ·  mongodb://localhost:27017  ·  connection string do Azure Cosmos DB",
     spellcheck: false,
   });
+  // Pela propriedade: o atributo "value" não preenche um textarea (e syncUri() apagaria a URI salva).
+  uriInput.value = c.uri;
   function syncUri() {
     const parsed = parseMongoUri(uriInput.value);
     flavorBadge.textContent = mongoFlavor(uriInput.value);
@@ -253,6 +254,12 @@ export function connectionDialog(initial, { isNew, hasPassword = false, onSave, 
   }
 
   const testBtn = btn([icon("fa-solid fa-plug-circle-check"), " Testar conexão"], test);
+  // onCopy(conn, anchor, typedPassword): menu "sem senha / com senha" (db.js).
+  const copyBtn = onCopy
+    ? btn([icon("fa-regular fa-clipboard"), " Copiar connection string ", icon("fa-solid fa-chevron-down")], (e) =>
+        onCopy(isMongoConn() ? { ...c, auth: { ...c.auth, kind: "sql" } } : c, e.currentTarget, password),
+      )
+    : null;
 
   const sqlSection = el(
     "div.db-sql",
@@ -303,6 +310,7 @@ export function connectionDialog(initial, { isNew, hasPassword = false, onSave, 
     footer: [
       !isNew && onDelete ? btn([icon("fa-regular fa-trash-can"), " Excluir"], () => (modal.close(), onDelete()), "hx-btn.danger") : null,
       el("span.hx-flex"),
+      copyBtn,
       testBtn,
       btn("Cancelar", modal.close),
       btn("Salvar", save, "hx-btn.primary"),

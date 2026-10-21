@@ -156,6 +156,14 @@ pub async fn db_has_password(conn_id: String) -> Result<bool, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Senha salva (para "Copiar connection string com senha").
+#[tauri::command]
+pub async fn db_get_password(conn_id: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || secrets::get(&conn_id, "password").map(|p| p.filter(|p| !p.is_empty())))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Apaga senha e tokens (conexão removida ou "sair da conta").
 #[tauri::command]
 pub async fn db_forget_secrets(app: tauri::AppHandle, conn_id: String) -> Result<(), String> {
@@ -270,6 +278,9 @@ pub async fn db_execute(
         _ = cancel_rx => None,
     };
     app.state::<DbInflight>().0.lock().unwrap().remove(&query_id);
+    // A resposta do invoke pode chegar antes das mensagens grandes do Channel: o JS só
+    // conclui ao receber este evento, que vem depois de todas as linhas.
+    let _ = sink.send(ExecEvent::Done);
 
     match outcome {
         Some(result) => result,

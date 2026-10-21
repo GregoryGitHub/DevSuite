@@ -13,6 +13,7 @@ import {
   uid,
   isMongo,
   affectedText,
+  buildConnectionString,
 } from "../utils/dbModel.js";
 import { dialectFor } from "../utils/sqlDialect.js";
 import { saveDbDataApi, loadDbDataApi, dbApi } from "../api.js";
@@ -97,6 +98,31 @@ async function copy(text, message = "Copiado") {
   }
 }
 
+/**
+ * Copia a connection string da conexão (para usar em outro software). Com `withPassword`, usa
+ * `typed` (senha digitada no diálogo) ou a do cofre do sistema.
+ */
+async function copyConnectionString(c, { withPassword = false, typed } = {}) {
+  let password;
+  if (withPassword && (isMongo(c) || c.auth.kind === "sql")) {
+    try {
+      password = typed || (await dbApi.getPassword(c.id)) || undefined;
+    } catch (e) {
+      return toast(`Não foi possível ler a senha do cofre: ${e}`);
+    }
+    if (!password) return copy(buildConnectionString(c), "Copiada sem senha: não há senha salva para esta conexão");
+  }
+  copy(buildConnectionString(c, password), password ? "Connection string copiada (com senha)" : "Connection string copiada");
+}
+
+/** Botão "Copiar connection string" do diálogo de conexão. */
+function copyConnectionMenu(c, anchor, typed) {
+  showMenuBelow(anchor, [
+    { label: "Sem senha", icon: "fa-regular fa-clipboard", run: () => copyConnectionString(c) },
+    c.auth.kind === "sql" ? { label: "Com senha", icon: "fa-solid fa-key", run: () => copyConnectionString(c, { withPassword: true, typed }) } : null,
+  ]);
+}
+
 function showMenu(x, y, items) {
   menuEl.innerHTML = "";
   let lastSep = true;
@@ -122,6 +148,8 @@ function showMenu(x, y, items) {
     menuEl.append(b);
   }
   if (menuEl.lastElementChild?.classList.contains("nt-menu-sep")) menuEl.lastElementChild.remove();
+  // Menu aberto de dentro de um diálogo (ex.: copiar connection string) fica acima do overlay.
+  menuEl.classList.toggle("over-modal", isDbModalOpen());
   menuEl.hidden = false;
   const host = appEl.getBoundingClientRect();
   const left = Math.min(x - host.left, host.width - menuEl.offsetWidth - 6);
@@ -179,7 +207,20 @@ async function disconnect(c) {
   statuses.delete(c.id);
   for (const k of [...completionCache.keys()]) if (k.startsWith(`${c.id}:`)) completionCache.delete(k);
   renderAll();
-  if (activeTab()?.conn_id === c.id) showTab(activeTab().id);
+  // Sem showTab(): ele reconectaria na hora. A aba volta a conectar só quando o usuário pedir.
+  const t = activeTab();
+  if (t?.conn_id === c.id) {
+    tabBodyEl.innerHTML = "";
+    tabBodyEl.append(
+      el(
+        "div.db-placeholder",
+        {},
+        icon("fa-solid fa-plug-circle-xmark"),
+        el("p", {}, `Desconectado de ${connLabel(c)}`),
+        el("button.hx-btn.primary", { type: "button", onclick: () => showTab(t.id) }, "Conectar"),
+      ),
+    );
+  }
 }
 
 function requireLogin(c) {
@@ -198,6 +239,7 @@ async function newConnectionDialog() {
   if (!state.desktopMode) await enterDesktopMode();
   connectionDialog(newConnection(), {
     isNew: true,
+    onCopy: copyConnectionMenu,
     onSave: async (c, password) => {
       data().connections.push(c);
       if (password) await dbApi.setPassword(c.id, password).catch((e) => toast(String(e)));
@@ -213,6 +255,7 @@ async function editConnection(c) {
   connectionDialog(c, {
     isNew: false,
     hasPassword,
+    onCopy: copyConnectionMenu,
     onSave: async (next, password) => {
       const i = data().connections.findIndex((x) => x.id === c.id);
       if (i < 0) return;
@@ -224,6 +267,7 @@ async function editConnection(c) {
       if (authChanged || password !== undefined || next.database !== c.database || next.encrypt !== c.encrypt || next.trust_server_certificate !== c.trust_server_certificate) {
         await disconnect(next);
         explorer?.refreshConnection(c.id);
+        if (activeTab()?.conn_id === c.id) showTab(activeTab().id);
       }
       renderAll();
     },
@@ -976,6 +1020,7 @@ export function setDbData(raw) {
       dialect: () => dialect(),
       showMenu,
       copy,
+      copyConnectionString,
       toast,
       saveUi: saveDataSoon,
       onConnectionsReordered: renderCompact,

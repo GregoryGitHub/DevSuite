@@ -1,6 +1,6 @@
 [package]
 name = "todo-rs"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Lightweight todo list running in the Windows tray"
 
@@ -36,10 +36,11 @@ amqp_serde = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tauri-plugin-single-instance = "2"
 
-# Exportar notas em PDF (note_pdf.rs): mesmas versões usadas pelo Tauri/wry.
+# Exportar notas em PDF (note_pdf.rs): mesmas versões usadas pelo Tauri/wry. Prévia de .md com
+# Espaço no Explorer (quicklook.rs): hook de teclado + Shell (IShellWindows/IFolderView2).
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Storage_EnhancedStorage"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_Storage_EnhancedStorage", "Win32_System_Ole", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 windows-core = "0.62"
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]

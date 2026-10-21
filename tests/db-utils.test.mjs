@@ -125,6 +125,35 @@ assert.equal(r.patch.host, "h.example");
 assert.equal(r.patch.port, 1444);
 assert.equal(r.patch.encrypt, "off");
 assert.equal(r.password, "x");
+
+r = parseConnectionString(`Server=h;Password="a;b""c";User ID='o''k';Lixo;Database=d`);
+assert.equal(r.password, 'a;b"c');
+assert.equal(r.patch.auth.user, "o'k");
+assert.equal(r.patch.database, "d");
+
+// buildConnectionString: ida e volta pelo parser
+{
+  const { buildConnectionString, newConnection: nc, isMongo } = await import(base + "dbModel.js");
+  const sql = nc({ host: "srv.database.windows.net", port: 1444, database: "db", auth: { kind: "sql", user: "adm" }, trust_server_certificate: true, read_intent: true, connect_timeout_s: 20 });
+  const s = buildConnectionString(sql, "p;w=d");
+  assert.ok(!buildConnectionString(sql).includes("Password"));
+  const back = parseConnectionString(s);
+  assert.equal(back.password, "p;w=d");
+  assert.deepEqual(back.patch, { auth: { user: "adm", kind: "sql" }, port: 1444, host: "srv.database.windows.net", database: "db", encrypt: "on", trust_server_certificate: true, read_intent: true, connect_timeout_s: 20 });
+
+  const inst = parseConnectionString(buildConnectionString(nc({ host: "PC", instance: "SQLEXPRESS", auth: { kind: "entra", user: "a@b.com" } }), "ignorada"));
+  assert.equal(inst.patch.host, "PC");
+  assert.equal(inst.patch.instance, "SQLEXPRESS");
+  assert.equal(inst.patch.auth.kind, "entra");
+  assert.equal(inst.password, undefined);
+
+  const mongo = nc({ driver: "mongo", uri: "mongodb+srv://joao%40x@cluster0.ab12.mongodb.net/?retryWrites=true", auth: { kind: "sql", user: "joao@x" } });
+  assert.ok(isMongo(mongo));
+  assert.equal(buildConnectionString(mongo), "mongodb+srv://joao%40x@cluster0.ab12.mongodb.net/?retryWrites=true");
+  assert.equal(buildConnectionString(mongo, "p@ss:1"), "mongodb+srv://joao%40x:p%40ss%3A1@cluster0.ab12.mongodb.net/?retryWrites=true");
+  const local = nc({ driver: "mongo", uri: "mongodb://localhost:27017", database: "loja", tls_insecure: true, auth: { kind: "sql", user: "admin" } });
+  assert.equal(buildConnectionString(local, "x"), "mongodb://admin:x@localhost:27017/loja?tlsAllowInvalidCertificates=true");
+}
 // --- sqlDdl (Modificar tabela)
 {
   const ddl = await import(base + "sqlDdl.js");

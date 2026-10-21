@@ -41,4 +41,15 @@ foreach ($svg in Get-ChildItem $appsDir -Filter *.svg) {
     Copy-Item (Join-Path $tmp 'icon.ico') (Join-Path $appsDir "$($svg.BaseName).ico") -Force
     Remove-Item $tmp -Recurse -Force
 }
+
+# Ícones de tipos de arquivo (src-tauri/icons/files/<tipo>.svg -> <tipo>.ico), instalados pelo
+# installer-hooks.nsh (ex.: markdown.ico = ícone dos .md quando o Dev Suite é o padrão).
+$filesDir = Join-Path $iconsDir 'files'
+foreach ($svg in Get-ChildItem $filesDir -Filter *.svg) {
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("devsuite-file-" + $svg.BaseName)
+    cargo tauri icon $svg.FullName -o $tmp 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "cargo tauri icon falhou para $($svg.Name) ($LASTEXITCODE)" }
+    Copy-Item (Join-Path $tmp 'icon.ico') (Join-Path $filesDir "$($svg.BaseName).ico") -Force
+    Remove-Item $tmp -Recurse -Force
+}
 Write-Host "Done."

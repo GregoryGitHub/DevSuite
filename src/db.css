@@ -508,6 +508,10 @@ body.db-resizing-y * {
   flex-direction: column;
 }
 
+#db-menu.over-modal {
+  z-index: 80;
+}
+
 .db-placeholder {
   flex: 1;
   display: flex;

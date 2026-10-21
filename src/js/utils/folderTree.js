@@ -117,6 +117,51 @@ export function ensureFolderPath(folders, parentId, names, make) {
   return pid;
 }
 
+const collator = new Intl.Collator("pt-BR", { sensitivity: "base", numeric: true });
+const byName = (a, b) => collator.compare(a.name, b.name);
+
+/**
+ * Move `id` para ser irmã de `targetId`, logo antes (ou depois, com `after`). Devolve false se
+ * não dá (alvo inexistente, ela mesma ou o alvo está dentro dela).
+ */
+export function placeFolder(folders, id, targetId, after = false) {
+  const folder = folders.find((f) => f.id === id);
+  const target = folders.find((f) => f.id === targetId);
+  const parentId = target?.parent_id || 0;
+  if (!folder || !target || folder === target || !canMoveFolder(folders, id, parentId)) return false;
+  folder.parent_id = parentId;
+  folders.splice(folders.indexOf(folder), 1);
+  folders.splice(folders.indexOf(target) + (after ? 1 : 0), 0, folder);
+  return true;
+}
+
+/**
+ * Coloca `folder` (nova, renomeada ou movida; já com o parent_id certo) na posição alfabética
+ * entre as irmãs: antes da 1ª irmã que vem depois dela, senão depois da última.
+ */
+export function insertFolderSorted(folders, folder) {
+  const at = folders.indexOf(folder);
+  if (at >= 0) folders.splice(at, 1);
+  const siblings = childrenOf(folders, folder.parent_id || 0);
+  const next = siblings.find((f) => byName(folder, f) < 0);
+  if (next) folders.splice(folders.indexOf(next), 0, folder);
+  else if (siblings.length) folders.splice(folders.indexOf(siblings[siblings.length - 1]) + 1, 0, folder);
+  else folders.push(folder);
+  return folders;
+}
+
+/** Ordena A–Z as filhas de `parentId` (e as subpastas, com `recursive`), no lugar. */
+export function sortFolderChildren(folders, parentId = 0, recursive = false) {
+  const parents = recursive ? [parentId, ...[...descendantIds(folders, parentId)].filter((id) => id !== parentId)] : [parentId];
+  for (const pid of parents) {
+    const siblings = childrenOf(folders, pid);
+    // As posições ocupadas pelas irmãs recebem as mesmas pastas em ordem alfabética.
+    const slots = siblings.map((f) => folders.indexOf(f));
+    [...siblings].sort(byName).forEach((f, i) => (folders[slots[i]] = f));
+  }
+  return folders;
+}
+
 /** Remove `id` e as subpastas; devolve o Set de ids removidos. */
 export function removeFolderTree(folders, id) {
   const gone = descendantIds(folders, id);

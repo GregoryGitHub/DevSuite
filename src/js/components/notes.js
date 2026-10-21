@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 import {
-  hasTauri, notesApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
+  hasTauri, notesApi, mdApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
 } from "../api.js";
 import { updateSettingsUI } from "./settings.js";
 import { registerApp } from "../appLifecycle.js";
@@ -22,6 +22,7 @@ import {
 import { ATTACHMENTS_DIR, addVaultPath, knownVaults, sameVaultPath, vaultName, vaultLabels } from "../utils/vaultNote.js";
 import {
   descendantIds, folderPath, flattenTree, canMoveFolder, uniqueFolderName, ensureFolderPath, removeFolderTree,
+  placeFolder, insertFolderSorted, sortFolderChildren,
 } from "../utils/folderTree.js";
 import { relDirs, relStem, vaultIndex, vaultImageLookup, normalizeVaultLinks, applyFileTitle } from "../utils/mdImport.js";
 import { formatNoteListDate, formatNoteFullDate, noteGroupLabel } from "../utils/date.js";
@@ -38,6 +39,7 @@ import { resolveMarkdownImages } from "../utils/noteImages.js";
 import { exportNotePdf } from "./notePdf.js";
 import { initEditor, loadEditor, runCommand, getSelectionState, focusEditorEnd } from "./noteEditor.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
+import { openFind, closeFind, isFindOpen } from "./noteFind.js";
 
 // "Quick Notes" modeled on macOS Notes: folders, grouped list, and a rich editor.
 // The same DOM is used in tray mode (stacked navigation) and desktop mode (3 columns).
@@ -571,6 +573,13 @@ async function markdownNote(md, stem, dir, lookup = null) {
   return { html, props: propsEmpty(props) ? null : props, created };
 }
 
+/** Edits a .md file in place, in its own window (md_files.rs), without importing it. */
+async function openMarkdownFile() {
+  if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
+  const path = await openFileDialogApi({ title: "Abrir arquivo Markdown", filters: [{ name: "Markdown", extensions: ["md", "markdown"] }] });
+  if (path) mdApi.open(path).catch((e) => toast(String(e)));
+}
+
 async function importMarkdown() {
   if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
   const paths = await openFileDialogApi({ title: "Importar Markdown", filters: MD_FILTERS, multiple: true });
@@ -625,7 +634,7 @@ async function importMarkdownFolder(parentId = scopeParentFolder()) {
       while (folderIds.has(id)) id++;
       folderIds.add(id);
       const folder = { id, name: name.slice(0, 60), parent_id: parent };
-      state.folders.push(folder);
+      insertFolderSorted(state.folders, folder);
       return folder;
     };
     const rootId = makeFolder(uniqueFolderName(state.folders, parentId, scan.name || "Importadas"), parentId).id;
@@ -786,7 +795,14 @@ function applyVaultDiff({ changed, removed, folders }, announce) {
       return true;
     });
   }
-  if (folders) state.folders = folders;
+  if (folders) {
+    // Pastas criadas fora do app entram em ordem alfabética (o cofre as põe no fim).
+    const known = new Set(state.folders.map((f) => f.id));
+    state.folders = folders;
+    const added = folders.filter((f) => !known.has(f.id));
+    for (const f of added) insertFolderSorted(state.folders, f);
+    if (added.length && known.size) saveFolders();
+  }
   const total = changed.length + removedSet.size;
   if (!total && !folders) {
     if (announce) toast("O cofre já está atualizado.");
@@ -902,12 +918,31 @@ export async function switchNotesStorage(mode, vaultPath, { copy = false } = {})
   return null;
 }
 
+/**
+ * Antes não havia reordenação manual: as pastas existentes (na ordem de criação) são postas em
+ * ordem alfabética uma vez por armazenamento. Depois disso a ordem manual é respeitada.
+ */
+function sortFoldersOnce() {
+  const key = `nt-folders-az:${isVault() ? state.settings.vault_path : "sqlite"}`;
+  try {
+    if (localStorage.getItem(key)) return;
+    localStorage.setItem(key, "1");
+  } catch {
+    return; // sem localStorage: não arrisca reordenar a cada abertura
+  }
+  if (state.folders.length < 2) return;
+  const before = state.folders.map((f) => f.id).join();
+  sortFolderChildren(state.folders, 0, true);
+  if (state.folders.map((f) => f.id).join() !== before) saveFolders();
+}
+
 /** Loads folders and note metadata from notes.db (importing notes.json on the first run). */
 export async function loadNotes() {
   try {
     const { notes, folders, error } = await loadNoteStore();
     state.notes = notes;
     state.folders = folders;
+    sortFoldersOnce();
     titleIndex = null;
     if (error) toast(`Notas antigas não importadas: ${error}`);
     // Removes image files no note references anymore (trash included); the list comes from the database.
@@ -927,6 +962,7 @@ function showMoreMenu(btn) {
   const note = selectedNote();
   showMenu(r.left, r.bottom + 4, [
     ...(isVault() ? [{ label: "Atualizar do Cofre", icon: "fa-solid fa-rotate", run: () => syncVault({ announce: true }) }, "sep"] : []),
+    { label: "Abrir Arquivo Markdown…", icon: "fa-brands fa-markdown", run: openMarkdownFile },
     { label: "Importar Markdown…", icon: "fa-solid fa-file-import", run: importMarkdown },
     { label: "Importar Pasta de Markdown…", icon: "fa-solid fa-folder-tree", run: () => importMarkdownFolder() },
     { label: "Exportar como Markdown…", icon: "fa-solid fa-file-export", disabled: !note, run: () => exportMarkdown(note.id) },
@@ -1017,7 +1053,8 @@ function createFolder(parentId = 0) {
   const name = uniqueFolderName(state.folders, parentId, "Nova Pasta");
   let id = Date.now();
   while (allFolders().some((f) => f.id === id)) id++;
-  state.folders.push({ id, name, parent_id: parentId });
+  // A posição alfabética é recalculada ao confirmar o nome (renameFolder).
+  insertFolderSorted(state.folders, { id, name, parent_id: parentId });
   if (parentId) {
     setFolderCollapsed(parentId, false);
     revealFolder(parentId);
@@ -1037,8 +1074,13 @@ function renameFolder(id, name) {
   const folder = state.folders.find((f) => f.id === id);
   ui.editingFolderId = null;
   if (folder && name.trim()) {
-    folder.name = name.trim().slice(0, 60);
-    saveFolders();
+    const next = name.trim().slice(0, 60);
+    // Nome novo = posição alfabética entre as irmãs; sem mudança, a posição manual fica.
+    if (next !== folder.name) {
+      folder.name = next;
+      insertFolderSorted(state.folders, folder);
+      saveFolders();
+    }
   }
   renderNotes();
 }
@@ -1069,12 +1111,27 @@ function moveFolder(id, parentId) {
   const folder = state.folders.find((f) => f.id === id);
   if (!folder || (folder.parent_id || 0) === parentId || !canMoveFolder(state.folders, id, parentId)) return;
   folder.parent_id = parentId;
-  // Last among the new siblings.
-  state.folders = [...state.folders.filter((f) => f !== folder), folder];
+  insertFolderSorted(state.folders, folder);
   if (parentId) {
     setFolderCollapsed(parentId, false);
     revealFolder(parentId);
   }
+  saveFolders();
+  renderNotes();
+}
+
+/** Puts a folder right before/after another one, as its sibling (manual order). */
+function reorderFolder(id, targetId, after) {
+  if (!placeFolder(state.folders, id, targetId, after)) return;
+  const parentId = state.folders.find((f) => f.id === id).parent_id;
+  if (parentId) revealFolder(parentId);
+  saveFolders();
+  renderNotes();
+}
+
+/** A–Z among the subfolders of `parentId` (0 = top level), all levels below it. */
+function sortFoldersAZ(parentId) {
+  sortFolderChildren(state.folders, parentId, true);
   saveFolders();
   renderNotes();
 }
@@ -1212,25 +1269,42 @@ function renderFolders() {
         });
         li.addEventListener("dragend", () => (draggedFolderId = null));
       }
-      const accepts = (e) => {
+      // Folder dragged over a real folder: top band = before (sibling), bottom band = after (only
+      // when nothing of this folder shows below it), middle = inside. Notes always go inside.
+      const zone = (e) => {
+        if (!entry.editable || !e.dataTransfer.types.includes("application/x-folder-id")) return "inside";
+        const r = li.getBoundingClientRect();
+        const y = (e.clientY - r.top) / r.height;
+        if (y < 0.3) return "before";
+        if (y > 0.7 && (!entry.hasChildren || collapsedFolders.has(entry.folderId))) return "after";
+        return "inside";
+      };
+      const accepts = (e, z) => {
         const types = e.dataTransfer.types;
         if (types.includes("application/x-note-id")) return true;
         // The id isn't readable during dragover, hence draggedFolderId.
-        return types.includes("application/x-folder-id") && draggedFolderId !== null && canMoveFolder(state.folders, draggedFolderId, entry.folderId);
+        if (!types.includes("application/x-folder-id") || draggedFolderId === null || draggedFolderId === entry.folderId) return false;
+        const parentId = z === "inside" ? entry.folderId : state.folders.find((f) => f.id === entry.folderId)?.parent_id || 0;
+        return canMoveFolder(state.folders, draggedFolderId, parentId);
       };
+      const clearDrop = () => li.classList.remove("drop-target", "drop-before", "drop-after");
       li.addEventListener("dragover", (e) => {
-        if (!accepts(e)) return;
+        const z = zone(e);
+        if (!accepts(e, z)) return clearDrop();
         e.preventDefault();
-        li.classList.add("drop-target");
+        clearDrop();
+        li.classList.add(z === "inside" ? "drop-target" : `drop-${z}`);
       });
-      li.addEventListener("dragleave", () => li.classList.remove("drop-target"));
+      li.addEventListener("dragleave", clearDrop);
       li.addEventListener("drop", (e) => {
         e.preventDefault();
-        li.classList.remove("drop-target");
+        const z = zone(e);
+        clearDrop();
         const noteId = Number(e.dataTransfer.getData("application/x-note-id"));
         const folderId = Number(e.dataTransfer.getData("application/x-folder-id"));
         if (noteId) moveNote(noteId, entry.folderId);
-        else if (folderId) moveFolder(folderId, entry.folderId);
+        else if (folderId && z === "inside") moveFolder(folderId, entry.folderId);
+        else if (folderId) reorderFolder(folderId, entry.folderId, z === "after");
       });
     }
 
@@ -1677,6 +1751,14 @@ function showFolderMenu(x, y, entry) {
       run: () => importMarkdownFolder(parent),
     },
   ];
+  // Real folder with subfolders, or "Notas" (= top level) when there are folders.
+  if (entry.editable ? entry.hasChildren : entry.folderId === 0 && state.folders.length > 1) {
+    items.push("sep", {
+      label: entry.editable ? "Ordenar Subpastas de A a Z" : "Ordenar Pastas de A a Z",
+      icon: "fa-solid fa-arrow-down-a-z",
+      run: () => sortFoldersAZ(parent),
+    });
+  }
   if (entry.editable) {
     const folder = state.folders.find((f) => f.id === entry.folderId);
     items.push(
@@ -1779,6 +1861,7 @@ function handleGlobalKeydown(e) {
   }
 
   if (e.key === "Escape") {
+    if (isFindOpen()) return closeFind({ select: false });
     if (!menuEl.hidden) return closeMenu();
     if (!popoverEl.hidden) return closePopover();
     if (searchInputs.includes(document.activeElement) && ui.query) {
@@ -1798,10 +1881,13 @@ function handleGlobalKeydown(e) {
     e.preventDefault();
     return createNote();
   }
-  if (mod && !e.shiftKey && key === "f") {
+  if (mod && !e.altKey && key === "f") {
     e.preventDefault();
     const input = state.desktopMode ? searchInputs[0] : searchInputs[1];
     if (ui.scope === "graph") return graph?.focusSearch();
+    // Ctrl+F = buscar dentro da nota aberta; Ctrl+Shift+F (ou já na busca da lista) = em todas.
+    const noteOpen = !editorScrollEl.hidden && (state.desktopMode || ui.pane === "editor");
+    if (!e.shiftKey && noteOpen && !searchInputs.includes(document.activeElement)) return openFind();
     if (!state.desktopMode && ui.pane !== "list") {
       ui.pane = "list";
       renderNotes();

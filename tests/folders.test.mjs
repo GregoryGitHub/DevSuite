@@ -162,4 +162,50 @@ assert.deepEqual(out.item[0].item[1].item.map((i) => i.name), ["Apagar", "Sem au
 const old = normalizeCollection({ id: 1, name: "Velha", folders: [{ id: 7, name: "P" }] });
 assert.equal(old.folders[0].parent_id, 0);
 
+// ---------- reordenar e ordem alfabética ----------
+{
+  const mk = () => [
+    { id: 1, name: "Zeta", parent_id: 0 },
+    { id: 2, name: "alfa", parent_id: 0 },
+    { id: 3, name: "Filha", parent_id: 1 },
+    { id: 4, name: "Ébano", parent_id: 0 },
+    { id: 5, name: "Pasta 10", parent_id: 0 },
+    { id: 6, name: "Pasta 2", parent_id: 0 },
+  ];
+  const top = (fs, pid = 0) => t.childrenOf(fs, pid).map((f) => f.id);
+
+  // Ordenar: sem acento/maiúsculas, números em ordem natural; filhas não se misturam.
+  let fs = t.sortFolderChildren(mk(), 0);
+  assert.deepEqual(top(fs), [2, 4, 6, 5, 1]);
+  assert.deepEqual(top(fs, 1), [3]);
+
+  // Recursivo: subpastas também.
+  fs = mk();
+  fs.push({ id: 7, name: "Beta", parent_id: 1 }, { id: 8, name: "Alfa", parent_id: 1 });
+  t.sortFolderChildren(fs, 0, true);
+  assert.deepEqual(top(fs, 1), [8, 7, 3]);
+
+  // Inserir em ordem (nova ou renomeada).
+  fs = t.sortFolderChildren(mk(), 0);
+  t.insertFolderSorted(fs, { id: 9, name: "Beta", parent_id: 0 });
+  assert.deepEqual(top(fs), [2, 9, 4, 6, 5, 1]);
+  t.insertFolderSorted(fs, { id: 10, name: "Única", parent_id: 3 });
+  assert.deepEqual(top(fs, 3), [10]);
+  fs.find((f) => f.id === 2).name = "Zz";
+  t.insertFolderSorted(fs, fs.find((f) => f.id === 2));
+  assert.deepEqual(top(fs), [9, 4, 6, 5, 1, 2]);
+
+  // Reordenar à mão: antes/depois, trocando de pai; não entra em si mesma.
+  fs = t.sortFolderChildren(mk(), 0);
+  assert.ok(t.placeFolder(fs, 1, 2));
+  assert.deepEqual(top(fs), [1, 2, 4, 6, 5]);
+  assert.ok(t.placeFolder(fs, 6, 5, true));
+  assert.deepEqual(top(fs), [1, 2, 4, 5, 6]);
+  assert.ok(t.placeFolder(fs, 2, 3, true));
+  assert.equal(fs.find((f) => f.id === 2).parent_id, 1);
+  assert.deepEqual(top(fs, 1), [3, 2]);
+  assert.equal(t.placeFolder(fs, 1, 3), false);
+  assert.equal(t.placeFolder(fs, 1, 1), false);
+}
+
 console.log("folders tests ok");

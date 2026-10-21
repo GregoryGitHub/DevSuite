@@ -26,7 +26,7 @@ todo-rs/
 ├── build_windows.ps1          # Script de build de release para Windows (.exe/.msi)
 ├── build_windows.sh           # Script de cross-compilação para Windows via Linux
 ├── dev-suite.svg              # Ícone fonte do app: bloco cinza com a grade 2×2 da suíte e um prompt `>_` (gerado em src-tauri/icons via `_gen_icons.ps1`, que também gera a bandeja `tray_*.svg` e os ícones de `icons/apps`)
-├── _gen_icons.ps1             # Gera todos os ícones do bundle com `cargo tauri icon` a partir do SVG (e os de cada app em src-tauri/icons/apps)
+├── _gen_icons.ps1             # Gera todos os ícones do bundle com `cargo tauri icon` a partir do SVG (e os de cada app em src-tauri/icons/apps e de tipos de arquivo em src-tauri/icons/files)
 ├── clean.sh                   # Script para limpar cache de build no Linux (cargo clean)
 ├── clean.ps1                  # Script para limpar cache de build no Windows
 ├── tests/kanban.test.mjs     # Testes do board das Tarefas: migração do todos.json, mover cards, colunas, prazos, filtros, Pomodoro (`node tests/kanban.test.mjs`)
@@ -37,6 +37,7 @@ todo-rs/
 ├── tests/zettel.test.mjs      # Testes do Zettelkasten das Notas: links, propriedades/YAML, grafo, busca, layout (`node tests/zettel.test.mjs`)
 ├── tests/folders.test.mjs     # Subpastas (Notas/HTTP), importação de pasta de Markdown, Postman aninhado (`node tests/folders.test.mjs`)
 ├── tests/vault.test.mjs       # Modo cofre das Notas: nomes de arquivo, caminhos de imagens, front-matter (`node tests/vault.test.mjs`)
+├── tests/mdfile.test.mjs      # .md de fora das Notas: front-matter/CRLF/BOM preservados, URLs de imagem `f/` (`node tests/mdfile.test.mjs`)
 ├── src/                       # Frontend da Aplicação
 │   ├── index.html             # Estrutura HTML principal (views, modais e barra de navegação)
 │   ├── theme.css              # Tokens de tema claro/escuro (html[data-theme]) e paleta de realce --syn-*
@@ -72,6 +73,8 @@ todo-rs/
 │       │   ├── graphLayout.js # Notas: simulação de forças do grafo (Barnes-Hut, para sozinha; sem DOM)
 │       │   ├── folderTree.js  # Árvore de pastas com subpastas (Notas e HTTP): filhos, caminho, achatar, mover, garantir caminho
 │       │   ├── mdImport.js    # Importar pasta de Markdown: caminhos relativos, imagens do vault, links [[pasta/Nota#seção]]
+│       │   ├── textFind.js    # Busca sem maiúsculas/acentos com posições preservadas (Ctrl+F na nota)
+│       │   ├── mdDoc.js       # .md de fora das Notas: texto do arquivo <-> HTML do editor (front-matter, EOL e BOM intactos; imagens relativas)
 │       │   ├── vaultNote.js   # Modo cofre: HTML da nota <-> arquivo .md (título = nome do arquivo, imagens relativas), safeName, folderDir
 │       │   ├── httpModel.js   # HTTP: modelo/migração, variáveis {{}}, URL<->params, montagem da requisição
 │       │   ├── httpConvert.js # HTTP: import cURL, snippets de código, import/export Postman v2.1
@@ -99,6 +102,7 @@ todo-rs/
 │           ├── noteCode.js    # Blocos de código das Notas (widget): linhas numeradas, dobrar/desdobrar, edição no lugar, Mermaid
 │           ├── mermaidView.js # Mermaid: carga sob demanda, fila de renderização, visualização com zoom/arrastar
 │           ├── notePdf.js     # Exportar nota em PDF: monta #note-print (só na mídia print, tema claro) e chama notes_print_pdf
+│           ├── noteFind.js    # Ctrl+F dentro da nota (Notas, janela do .md e prévia): barra flutuante + destaques via CSS Highlight API
 │           ├── noteLinks.js   # Links [[ ]] no editor: hidratar chips, seguir link, prévia ao passar o mouse (dados via setLinkProvider)
 │           ├── noteProps.js   # Painel de propriedades do modo Zettelkasten (tags, apelidos, tipo, status, fonte, campos livres)
 │           ├── noteLinksPanel.js # Rodapé da nota: "Mencionada em" (backlinks) e "Links"
@@ -132,17 +136,22 @@ todo-rs/
 │           ├── detach.js      # Apps desatachados: abrir em janela própria, ↗ no seletor, reatachar, gravar antes de sair
 │           ├── pomodoro.js    # Motor do Pomodoro dos cards (por timestamp; eventos pomodorotick/pomodorochange; sem interface)
 │           ├── settings.js    # Gerenciamento de configurações (autostart, minimizado)
+│           ├── mdFile.js      # Janela de um .md de fora das Notas (editor, grava no arquivo, conflito) e a prévia somente leitura do Espaço
 │           ├── notesStorage.js # Configurações: notas no banco local ou num cofre (pasta de Markdown); lista de cofres; copiar notas ao ativar
 │           └── windowControls.js # Controles da janela frameless e menu dropdown
 └── src-tauri/                 # Backend Rust (Tauri)
     ├── Cargo.toml             # Dependências Rust (tauri, serde, etc.)
-    ├── tauri.conf.json        # Configuração do aplicativo (tamanho, frameless, tray)
+    ├── tauri.conf.json        # Configuração do aplicativo (tamanho, frameless, tray, associação de .md, resources, hooks do NSIS)
+    ├── installer-hooks.nsh    # Hooks do NSIS: ProgID DevSuite.Markdown com ícone de arquivo .md e "Abrir com → Dev Suite - Notas" (ícone do Notas)
+    ├── icons/files/markdown.* # Ícone dos arquivos .md (folha + marca M↓; .ico gerado pelo _gen_icons.ps1, instalado como resource)
     └── src/
         ├── main.rs            # Comandos Rust IPC e lógica de persistência JSON no disco
         ├── http.rs            # Cliente HTTP (reqwest), cancelamento, cookies, http.json e arquivos
         ├── note_images.rs     # Imagens das notas em note-images/ + protocolo noteimg://
         ├── note_pdf.rs        # Exportar nota em PDF: imprime a webview direto no arquivo (WebView2 PrintToPdf / WebKitGTK PrintOperation)
         ├── notes_db.rs        # Notas e pastas em SQLite (notes.db, rusqlite bundled): FTS5 trigram, migração do JSON; despacha os comandos para SQLite ou cofre
+        ├── md_files.rs        # .md de fora das Notas: janela `md-<hash>` por arquivo, ler/gravar com conflito por mtime, imagens em attachments/ ao lado, janela `md-preview`
+        ├── quicklook.rs       # Windows: Espaço no Explorer/Área de Trabalho (hook WH_KEYBOARD_LL + IShellWindows/IFolderView2) abre a prévia do .md
         ├── notes_vault.rs     # Modo cofre: pasta de .md como fonte da verdade + índice local (vaults/<hash>.db), conflitos, lixeira .trash
         ├── persist.rs         # Fila de gravação em thread própria (atômica, sem travar a UI)
         ├── app_windows.rs     # Janelas desatachadas (app-<id>): abrir/fechar, windows.json, AppUserModelID + relançamento, menu da bandeja
@@ -209,10 +218,14 @@ O backend Rust (`src-tauri/src/main.rs`) expõe os seguintes comandos via Tauri 
 | `notes_set_storage` | `{ mode: "sqlite"\|"vault", path? }` | `Result` | Troca o backend das notas na hora (erro = continua no anterior) |
 | `notes_vault_refresh` | - | `Result<ScanDiff>` | Cofre: relê o que mudou no disco `{ changed: [NoteMeta], removed: [id], folders? }` |
 | `notes_vault_files` | - | `Result<Vec<String>>` | Cofre: anexos (não-.md), relativos ao cofre, para resolver `![[x.png]]` |
+| `md_file_read` / `md_file_write` | `{ path }` / `{ path, text, expectedMtime }` | `{ text, mtime, token, name }` / `{ mtime, conflict }` | .md de fora das Notas; `token` = pasta do arquivo (imagens `f/`); com `conflict` nada é gravado |
+| `md_file_save_image` / `md_file_import_image` | bytes + headers `x-token`/`x-ext` / `{ token, path }` | `Result<String>` | Imagem em `attachments/` ao lado do arquivo; devolve o caminho relativo |
+| `md_open` / `md_reveal` / `md_window_close` | `{ path }` / `{ path }` / - | `Result` | Abrir a janela do arquivo, mostrar no Explorer, fechar depois de gravar |
+| `md_preview_ready` / `md_preview_hide` | - | `()` | Prévia: mostrar (centralizada no monitor do cursor) / esconder |
 
 **Modo cofre** (`AppSettings.notes_storage = "vault"`, `vault_path`): os comandos `notes_*` são os mesmos, despachados em `notes_db.rs` (`Backend::Sqlite | Backend::Vault`). Diferenças: `notes_get` devolve `{ markdown, rel, mtime }` em vez do HTML; `notes_save` recebe também `markdown` (gerado no JS) e `disk_mtime` e devolve `{ disk_mtime, rel, conflict }`; `NoteMeta` traz `front_matter` (cru), `disk_mtime` e `rel`.
 
-Imagens das notas são servidas pelo protocolo `noteimg` (`http://noteimg.localhost/<nome>` no Windows, `noteimg://localhost/<nome>` no Linux/macOS); o HTML guarda só a URL e `normalizeNote` converte entre as duas formas.
+Arquivos `.md` de fora das Notas: ver regra 13. Imagens das notas são servidas pelo protocolo `noteimg` (`http://noteimg.localhost/<nome>` no Windows, `noteimg://localhost/<nome>` no Linux/macOS); o HTML guarda só a URL e `normalizeNote` converte entre as duas formas.
 
 Diálogos de arquivo usam `tauri-plugin-dialog` (`plugin:dialog|open` / `plugin:dialog|save`).
 
@@ -223,7 +236,7 @@ Todos os comandos que tocam a rede são `async`. Os que rodam SQL recebem `targe
 | Comando IPC | Parâmetros | Retorno | Descrição |
 | :--- | :--- | :--- | :--- |
 | `load_db_data` / `save_db_data` | `{ data: Value }` | `Value` / `Result` | Documento `databases.json` (formato em `dbModel.js`, sem segredos) |
-| `db_set_password` / `db_has_password` / `db_forget_secrets` | `{ connId, password? }` | `Result` | Senha (e refresh token do Entra) no cofre do sistema |
+| `db_set_password` / `db_has_password` / `db_get_password` / `db_forget_secrets` | `{ connId, password? }` | `Result` | Senha (e refresh token do Entra) no cofre do sistema; `get` só para "Copiar connection string com senha" (`buildConnectionString` em `dbModel.js`) |
 | `db_test_connection` | `{ conn, password? }` | `Result<ServerInfo>` | Testa a configuração do diálogo |
 | `db_connect` | `{ target }` | `Result<ServerInfo>` | Abre a sessão (pode abrir o navegador para o login do Entra) |
 | `db_disconnect` | `{ prefix }` | `()` | Fecha as sessões com esse prefixo |
@@ -231,7 +244,7 @@ Todos os comandos que tocam a rede são `async`. Os que rodam SQL recebem `targe
 | `db_table_info` / `db_ddl` | `{ target, schema, name }` / `{ target, path }` | `Result` | Colunas com PK/identity/FK; DDL do objeto |
 | `db_table_schema` | `{ target, schema, name }` | `Result<TableSchema>` | Estrutura editável: colunas (default + nome da constraint), índices/chaves, FKs, checks |
 | `db_database_script` | `{ target, options: DbScriptOptions }` | `Result<{ sql, objects, warnings }>` | Script do banco inteiro na ordem de criação (só SQL Server); `options` = tipos de objeto, `schemas` (vazio = todos), `if_not_exists` |
-| `db_execute` | `{ target, queryId, sql, maxRows?, onEvent: Channel }` | `Result<ExecSummary>` | Result sets em lotes pelo Channel (`result_start`/`rows`/`docs`/`result_end`); `sql` = SQL ou, no MongoDB, a operação JSON |
+| `db_execute` | `{ target, queryId, sql, maxRows?, onEvent: Channel }` | `Result<ExecSummary>` | Result sets em lotes pelo Channel (`result_start`/`rows`/`docs`/`result_end`, e `done` por último: `dbApi.execute` só resolve depois dele, porque a resposta do invoke pode chegar antes das mensagens grandes do Channel); `sql` = SQL ou, no MongoDB, a operação JSON |
 | `db_cancel` | `{ queryId }` | `()` | Cancela fechando o socket (o servidor aborta e desfaz a transação) |
 | `db_tx` | `{ target, action: begin\|commit\|rollback }` | `Result<u32>` | Devolve @@TRANCOUNT |
 | `db_apply` | `{ target, statements, atomic }` | `Result<Vec<u64>>` | Alterações do grid (tudo ou nada quando `atomic`) |
@@ -258,7 +271,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 - **NoteMeta** (notes.db): `{ id: u64, title, preview, created_at: String, updated_at: u64 (ms), pinned: bool, folder_id: u64 (0 = "Notas"), deleted_at?: u64, props: Value (null | { zid, tags, aliases, type, status, source, author, extra }), links: [id | "título sem nota"] }`
 - **NoteSave**: `NoteMeta` + `{ content: String (HTML), plain: String (texto da busca + tags/apelidos), images: [nome] }` — título/prévia/texto/imagens/links calculados no JS (`noteRecord`). `notes_set_meta` não toca em `props`/`links`. Esquema do notes.db migra por `PRAGMA user_version` (`MIGRATIONS` em `notes_db.rs`).
 - **Folder**: `{ id: u64, name: String, parent_id: u64 (0 = nível superior) }` — coluna `parent_id` criada pela migração v2 do notes.db
-- **AppSettings**: `{ autostart: bool, start_minimized: bool, theme: "system" | "light" | "dark", zettelkasten: bool, notes_storage: "sqlite" | "vault", vault_path: String, vaults: [String] }`
+- **AppSettings**: `{ autostart: bool, start_minimized: bool, theme: "system" | "light" | "dark", zettelkasten: bool, notes_storage: "sqlite" | "vault", vault_path: String, vaults: [String], md_quicklook: bool (padrão true; só Windows) }`
 - **HttpRequest** (IPC): `{ id, method, url, headers: [{key,value}], body: {kind: none|text|multipart|file}, timeout_ms, follow_redirects, verify_ssl, use_cookies }`
 - **http.json**: `{ version, collections: [{id,name,description,auth,variables,scripts,folders: [{id,name,parent_id,collapsed}]}], requests: [...], environments, active_env, globals, history, settings }`
 
@@ -292,9 +305,10 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - **Menus** (`noteMenus.js`): selecionar texto mostra a barra de formatação abaixo da seleção; `/` no início da linha ou após espaço abre o menu de blocos (filtra pelo texto, setas/Enter/Tab, Esc mantém a `/`). Os itens chamam `runCommand` (inclui `mermaid`, `image`, `inline-code`, `clear`). Teclas consumidas pelos menus/blocos de código param a propagação (Esc no modo bandeja volta para a lista).
    - Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y usam `noteHistory.js`, não o undo nativo (que quebra com as edições diretas no DOM). Toda alteração deve passar por `changed()` no editor para entrar no histórico.
    - Markdown: menu "…" (e menus de contexto) importa `.md` como novas notas e exporta a nota (imagens copiadas para `<nome>.assets/`).
-   - **Subpastas**: pastas formam uma árvore (`parent_id`, qualquer profundidade; a pasta virtual "Notas" (id 0) não tem filhas). A lista de uma pasta mostra também as notas das subpastas (com o caminho no item) e a contagem soma as subpastas. Recolher/expandir fica no `localStorage`. Arrastar pasta sobre pasta aninha; sobre "Notas" volta ao nível superior. Apagar pasta apaga as subpastas e manda as notas para a lixeira.
+   - **Subpastas**: pastas formam uma árvore (`parent_id`, qualquer profundidade; a pasta virtual "Notas" (id 0) não tem filhas). A lista de uma pasta mostra também as notas das subpastas (com o caminho no item) e a contagem soma as subpastas. Recolher/expandir fica no `localStorage`. Arrastar pasta sobre pasta: faixa de cima = antes (irmã), de baixo = depois (só com a pasta fechada ou sem subpastas), meio = dentro; sobre "Notas" volta ao nível superior. Ordem: pastas novas, renomeadas, movidas para dentro de outra, importadas ou criadas fora do cofre entram em ordem alfabética entre as irmãs (`insertFolderSorted`); reordenar à mão é respeitado; menu "Ordenar (Sub)pastas de A a Z". As pastas antigas foram ordenadas A–Z uma vez por armazenamento (`nt-folders-az:*` no `localStorage`). Apagar pasta apaga as subpastas e manda as notas para a lixeira.
    - **Importar pasta de Markdown** (ícone ao lado de "No Meu PC", menu "…" e menu da pasta): `notes_scan_dir` lê tudo no Rust; cria uma pasta com o nome do diretório (dentro da pasta aberta) e uma subpasta por diretório que tenha notas; notas ficam com a data do arquivo e são gravadas em lotes (`notes_save_many`). Imagens: relativas à nota, à raiz ou só pelo nome (`![[x.png]]` do Obsidian). Links `[[pasta/Nota.md#seção]]` viram `[[Nota]]` quando a nota existe na pasta importada (`mdImport.js`).
    - **Título e front-matter no import** (arquivo ou pasta): o **nome do arquivo é o título** (`applyFileTitle`: um 1º título com o mesmo texto vira o h1; senão o nome entra acima e o `### Seção` inicial continua como seção). Chaves do YAML comparadas sem acento/maiúsculas/espaços (`parseFrontMatter`): `tags` (o `#` das tags sai), `Autor`/`author` → propriedade `author` (campo opcional do painel), `Data criação`/`created`/`date`/`criado em` → `created_at` da nota (AAAA-MM-DD, DD/MM/AAAA ou ISO); o resto vai para campos livres.
+   - **Buscar na nota (Ctrl+F)** (`noteFind.js`): com uma nota aberta, Ctrl+F abre a barra no canto do editor (sem maiúsculas/acentos; Enter/Shift+Enter ou F3/Shift+F3 navegam, Esc fecha e seleciona a ocorrência). Ctrl+Shift+F (ou Ctrl+F já na busca da lista) busca em todas as notas. Vale também na janela do .md e na prévia do Espaço. Os destaques usam a CSS Custom Highlight API (`::highlight(nt-find)`), sem tocar no DOM do editor; um `MutationObserver` refaz a busca ao editar/trocar de nota. Ignora cabeçalho/numeração dos blocos de código, diagramas e editores de código abertos.
    - **Data de criação**: toda nota mostra "Criada em <data> · Editada em …" acima do texto; a data é editável (input date, mantém a hora) e grava a nota inteira (`notes_set_meta` não toca em `created_at`).
    - **Colar Markdown** (Ctrl+V): texto puro (ou HTML sem formatação, ex. VS Code) que `markdownKind()` reconhece vira formatação — uma linha com `` `código` ``/`**negrito**`/links = inline; títulos, listas, cercas, citações, tabelas = blocos (numa nota vazia viram a nota inteira). Ctrl+Shift+V cola o texto cru. Dentro de `pre`/tabela nunca converte.
    - **Código inline**: `` `texto` `` vira `<code>` ao fechar a crase (também com tecla morta do ABNT2, em que a crase chega junto do próximo caractere, e por composição no Linux — `compositionend`), pela barra da seleção ou pelo menu "/".
@@ -365,6 +379,14 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - **Barra de tarefas (Windows)**: cada janela recebe o AppUserModelID `DevSuite.<id>` (botão e ícone separados da principal) e as propriedades de relançamento (`"<exe>" --app=<id>`, nome e `.ico` gravado em `<app_data>/app-icons/`), limpas antes de destruir a janela. Fixar a janela na barra cria um atalho que abre direto aquele app. No Linux só o ícone da janela muda.
    - `windows.json` (app_data): apps soltos (reabertos ao iniciar; com "iniciar minimizado" abrem minimizados) e posição/tamanho físicos de cada janela (guardados ao fechar e ao sair; fora da tela = centraliza). O menu da bandeja ganha "Mostrar <app>" para cada app solto.
 
+13. **Arquivos .md de fora das Notas** (`md_files.rs`, `quicklook.rs`, `mdFile.js`, `mdDoc.js`):
+   - **Abrir para editar**: dois cliques num `.md` (associação em `tauri.conf.json → bundle.fileAssociations`, registrada pelo instalador NSIS/MSI), `dev-suite.exe <arquivo.md>` ou "Abrir Arquivo Markdown…" no menu "…" das Notas. O argumento chega pelo `setup` (1º início; a principal fica na bandeja) ou pelo single-instance (`md_arg`). Cada arquivo tem a sua janela `md-<hash do caminho>` (`window.__DEVSUITE_MD__ = { path }`; `main.js` só chama `initMdFile`): o editor das Notas sem pastas/lista/propriedades, não entra no notes.db nem no cofre.
+   - O arquivo é a verdade: **abrir nunca regrava**; editar grava com debounce (800 ms), ao perder o foco, Ctrl+S e ao fechar. Front-matter cru, CRLF/LF e BOM voltam como estavam; o arquivo não ganha título nem `created:` (diferente do cofre). Conflito por mtime (`expectedMtime`): faixa "Recarregar do disco" / "Sobrescrever"; fechar com conflito grava a versão do app em `<nome> (conflito <data>).md`. Ao focar a janela sem edição pendente, relê se o mtime mudou. Links `[[ ]]` ficam pendentes (sem notas nesta janela).
+   - Imagens relativas ao arquivo: `noteimg://localhost/f/<token>/<caminho codificado num segmento só>` (`fileImageUrl`; um segmento para o navegador não resolver `../` na URL); o Rust resolve com `vault_file` (recusa `..`/absolutos, então `../x.png` aparece quebrada mas volta igual ao salvar). Coladas vão para `attachments/` ao lado do arquivo (`setImageTarget` em `noteImages.js`).
+   - **Prévia com Espaço (Windows)**: `quicklook.rs` instala um hook `WH_KEYBOARD_LL` que só observa (não engole a tecla). Espaço sem modificadores com o foco na lista de itens (`DirectUIHWND`/`SysListView32`) do Explorer (`CabinetWClass`) ou da Área de Trabalho (`Progman`/`WorkerW`) → thread COM pergunta o item selecionado (`IShellWindows`; aba ativa do Win11 = 1ª `ShellTabWindowClass`; `IFolderView2::GetSelection`) → um único `.md` abre a janela `md-preview` (criada oculta no início para abrir na hora; `__DEVSUITE_PREVIEW__`): editor `readOnly` com Mermaid, código, tabelas e imagens, botão "Editar" (abre a janela do arquivo). Espaço/Esc/perder o foco escondem; Espaço de novo no Explorer sobre o mesmo arquivo também. Liga/desliga em Configurações (`md_quicklook`, `quicklook::set_enabled` no `setup` e no `save_settings`).
+   - **Associação e ícones (instalador NSIS)**: `fileAssociations` cria o ProgID `DevSuite.Markdown` (o nome da associação), mas o template do Tauri sempre usa o ícone do executável; o `installer-hooks.nsh` (POSTINSTALL) troca o `DefaultIcon` para `icons/markdown.ico` e define o nome/ícone do "Abrir com" (`Application` + `FriendlyAppName` = "Dev Suite - Notas", `icons/notes.ico`), adiciona `OpenWithProgids` e remove o ProgID antigo `Markdown` se apontar para o `dev-suite.exe`. O MSI não usa os hooks. A janela do arquivo usa o ícone do Notas.
+   - **Permissões**: toda janela nova precisa casar com `windows` em `src-tauri/capabilities/default.json` (`main`, `app-*`, `md-*`); sem isso `event.listen` falha e a janela fica sem eventos (foi o que impedia abrir o arquivo e a prévia).
+
 ---
 
 ## 5. Instruções para Manutenção
@@ -373,6 +395,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 - Mantenha o arquivo `src/main.js` apenas para carregar o estado inicial e vincular ouvintes globais.
 - Sempre rode `./build_linux.sh` ou `cargo check` em `src-tauri` para validar alterações no código Rust ou builds.
 - Tarefas: `node tests/kanban.test.mjs`.
+- Arquivos .md de fora das Notas: `node tests/mdfile.test.mjs` e `cargo test md_files`.
 - Notas: `node tests/code-block.test.mjs` (blocos de código e realce), `node tests/zettel.test.mjs` (links, propriedades, grafo), `node tests/folders.test.mjs` (subpastas, importação de pasta, Postman aninhado), `node tests/vault.test.mjs` (cofre) e `cargo test notes` (notes_db + notes_vault) / `cargo test vault_file`.
 - Banco: `node tests/db-utils.test.mjs` e `node tests/mongo.test.mjs` (utilitários JS) e `cargo test` em `src-tauri`; MongoDB: `docker run -d -p 27019:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=TodoRs#Mongo2026 mongo:7` e `TODORS_MONGO_TEST="mongodb://admin@localhost:27019/?authSource=admin|TodoRs#Mongo2026" cargo test it_mongo`; os testes de integração precisam de um SQL Server: `docker run -d -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=TodoRs#Test2026" -p 14333:1433 mcr.microsoft.com/mssql/server:2022-latest` e `TODORS_MSSQL_TEST="localhost,14333,sa,TodoRs#Test2026" cargo test it_ -- --test-threads=1`.
 - RabbitMQ: `node tests/rabbit.test.mjs`, `cargo test rabbit`; integração: `docker run -d --name todors-rabbit-test -p 5673:5672 -p 15673:15672 rabbitmq:3-management` e `TODORS_RABBIT_TEST="http://localhost:15673|5673|guest|guest" cargo test it_rabbit -- --test-threads=1`.
