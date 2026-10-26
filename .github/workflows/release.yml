@@ -41,7 +41,7 @@ jobs:
       # CLI `devsuite`: empacotada como externalBin (tauri.release.conf.json).
       - name: Build CLI (Linux)
         if: matrix.platform == 'ubuntu-22.04'
-        run: ./build_cli.sh
+        run: bash ./build_cli.sh
 
       - name: Build CLI (Windows)
         if: matrix.platform == 'windows-latest'
