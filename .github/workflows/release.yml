@@ -4,7 +4,18 @@ on:
   push:
     tags:
       - "v*"
+  # Manual: (re)publica os artefatos numa release que já existe (ex.: a v1.2.0 sem Linux)
+  # ou cria uma nova. Nunca apaga releases nem tags: cada versão fica no histórico.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release (ex.: v1.2.0)"
+        required: true
+
+# Um run por tag e sem cancelar o que já está rodando (um push novo não derruba o anterior).
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   publish-tauri:
@@ -53,8 +64,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Dev Suite ${{ github.ref_name }}"
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Dev Suite ${{ inputs.tag || github.ref_name }}"
           releaseBody: "Confira as novidades e artefatos compilados para esta versão do Dev Suite!"
           releaseDraft: false
           prerelease: false
