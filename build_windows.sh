@@ -13,8 +13,10 @@ fi
 
 rustup target add x86_64-pc-windows-gnu 2>/dev/null || true
 
+./build_cli.sh x86_64-pc-windows-gnu
+
 echo "Executando cargo tauri build --target x86_64-pc-windows-gnu..."
-cargo tauri build --target x86_64-pc-windows-gnu
+cargo tauri build --target x86_64-pc-windows-gnu --config src-tauri/tauri.release.conf.json
 
 echo ""
 echo "=== Build concluído com sucesso! ==="

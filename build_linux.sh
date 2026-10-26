@@ -11,8 +11,11 @@ if ! command -v cargo-tauri &> /dev/null && ! cargo tauri --version &> /dev/null
     cargo install tauri-cli --version '^2.0' --locked
 fi
 
+# CLI `devsuite`: o .deb/.rpm a instalam em /usr/bin ao lado do app.
+./build_cli.sh
+
 echo "Executando cargo tauri build..."
-cargo tauri build
+cargo tauri build --config src-tauri/tauri.release.conf.json
 
 echo ""
 echo "=== Build para Linux concluído com sucesso! ==="

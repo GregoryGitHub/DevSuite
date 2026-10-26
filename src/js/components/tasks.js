@@ -1333,3 +1333,12 @@ function renameBoardCompact() {
     btn.hidden = false;
   });
 }
+
+// ---------- CLI (js/cli/tasksCli.js) ----------
+
+/** Operações das Tarefas usadas pela CLI `devsuite`, sobre o board vivo desta janela. */
+export const tasksHost = {
+  moveCardTo,
+  removeCard,
+  commit,
+};

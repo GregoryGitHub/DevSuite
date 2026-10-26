@@ -38,6 +38,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
+      # CLI `devsuite`: empacotada como externalBin (tauri.release.conf.json).
+      - name: Build CLI (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: ./build_cli.sh
+
+      - name: Build CLI (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: ./build_cli.ps1
+
       - name: Build and Publish Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -48,3 +58,4 @@ jobs:
           releaseBody: "Confira as novidades e artefatos compilados para esta versão do Dev Suite!"
           releaseDraft: false
           prerelease: false
+          args: "--config src-tauri/tauri.release.conf.json ${{ matrix.args }}"

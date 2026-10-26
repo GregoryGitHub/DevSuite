@@ -52,6 +52,40 @@ export const notesApi = {
   vaultFiles: () => invoke("notes_vault_files"),
 };
 
+// ---------- Controle de versão do cofre (git do sistema; src-tauri/src/notes_git.rs) ----------
+// `path` = relativo à raiz do repositório (o cofre pode ser uma subpasta dele).
+
+export const gitApi = {
+  /** { available, version, repo, root, top, prefix, remote_url, user_name, user_email } */
+  info: () => invoke("git_info"),
+  /** { files: [{ path, orig_path, rel, status }], branch, head, upstream, ahead, behind, merging } */
+  status: () => invoke("git_status"),
+  init: () => invoke("git_init"),
+  /** Cria <parent>/<name> com repositório e commit inicial: { path, git, committed, git_error }. */
+  createVault: (parent, name) => invoke("notes_vault_create", { parent, name }),
+  /** { left, right, left_label, right_label, binary, editable, mtime } (null = não existe naquele lado). */
+  filePair: (path, origPath = null, rev = null) => invoke("git_file_pair", { path, origPath, rev }),
+  writeFile: (path, text, expectedMtime) => invoke("git_write_file", { path, text, expectedMtime }),
+  commit: (paths, message, amend = false) => invoke("git_commit", { paths, message, amend }),
+  rollback: (files) => invoke("git_rollback", { files }),
+  ignore: (path) => invoke("git_ignore", { path }),
+  log: (path = null, skip = 0, limit = 100) => invoke("git_log", { path, skip, limit }),
+  commitFiles: (hash) => invoke("git_commit_files", { hash }),
+  setRemote: (url) => invoke("git_remote_set", { url }),
+  testRemote: (url, opId) => invoke("git_remote_test", { url, opId }),
+  fetch: (opId) => invoke("git_fetch", { opId }),
+  /** { message, conflicts } */
+  pull: (opId) => invoke("git_pull", { opId }),
+  push: (opId) => invoke("git_push", { opId }),
+  cancel: (opId) => invoke("git_cancel", { opId }),
+  /** { base, ours, theirs, binary } */
+  conflict: (path) => invoke("git_conflict", { path }),
+  /** text = null apaga o arquivo. */
+  resolve: (path, text) => invoke("git_resolve", { path, text }),
+  mergeAbort: () => invoke("git_merge_abort"),
+  setIdentity: (name, email, global) => invoke("git_set_identity", { name, email, global }),
+};
+
 export async function loadSettingsApi() {
   try {
     return (await invoke("load_settings")) || { autostart: false, start_minimized: false };
@@ -255,16 +289,17 @@ export const dbApi = {
   /** Senha do cofre (null = não tem). */
   getPassword: (connId) => invoke("db_get_password", { connId }),
   /**
-   * `onEvent` recebe ResultStart/Rows/ResultEnd enquanto a consulta roda; resolve com o resumo
+   * `onEvent` recebe ResultStart/Rows/ResultEnd/Message/Plan enquanto a consulta roda; resolve com o resumo
    * só depois do evento "done": a resposta do invoke pode chegar antes das últimas linhas.
    */
-  async execute(target, queryId, sql, { maxRows = null, onEvent }) {
+  /** `options`: { plan: "estimated" | "actual", stats_io, stats_time } (análise; só SQL Server). */
+  async execute(target, queryId, sql, { maxRows = null, options = null, onEvent }) {
     requireTauri();
     const channel = new window.__TAURI__.core.Channel();
     let finished;
     const done = new Promise((resolve) => (finished = resolve));
     channel.onmessage = (ev) => (ev.type === "done" ? finished() : onEvent(ev));
-    const summary = await invoke("db_execute", { target, queryId, sql, maxRows, onEvent: channel });
+    const summary = await invoke("db_execute", { target, queryId, sql, maxRows, options, onEvent: channel });
     // Segurança: não trava se o evento se perder.
     await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 3000))]);
     return summary;
@@ -318,4 +353,44 @@ export const rabbitApi = {
   deleteMatching: (filter) => invoke("rmq_messages_delete_matching", { filter }),
   saveMessages: (messages, maxBodyKb = null) => invoke("rmq_messages_save", { messages, maxBodyKb }),
   stats: () => invoke("rmq_store_stats"),
+};
+
+// ---------- Redis (redis.json + comandos crus; ver src-tauri/src/redis_app/) ----------
+
+/** Valores chegam como { t, v } (ver redisModel.js); os comandos rejeitam com texto legível. */
+export const redisApi = {
+  load: () => invoke("load_redis_data").catch(() => null),
+  save: (data) => invoke("save_redis_data", { data }),
+  setSecret: (connId, kind, value) => invoke("redis_set_secret", { connId, kind, value }),
+  hasSecrets: (connId) => invoke("redis_has_secrets", { connId }).catch(() => ({})),
+  forgetSecrets: (connId) => invoke("redis_forget_secrets", { connId }).catch(() => {}),
+  test(conn, secrets = null) {
+    requireTauri();
+    return invoke("redis_test", { conn, secrets });
+  },
+  connect(conn) {
+    requireTauri();
+    return invoke("redis_connect", { conn });
+  },
+  disconnect: (connId) => invoke("redis_disconnect", { connId }).catch(() => {}),
+  closeSession: (connId, session) => invoke("redis_close_session", { connId, session }).catch(() => {}),
+  nodes: (conn) => invoke("redis_nodes", { conn }),
+  /** args: [texto | { b64 }]; node: "host:porta" no Cluster. */
+  exec: (conn, db, args, { session = "meta", node = null } = {}) => invoke("redis_exec", { conn, db, session, args, node }),
+  pipeline: (conn, db, cmds, { session = "meta", node = null } = {}) => invoke("redis_pipeline", { conn, db, session, cmds, node }),
+  scan: (conn, db, spec) => invoke("redis_scan", { conn, db, spec }),
+  /** spec: { kind: monitor | subscribe, channels, patterns, node, db }; onEvent(ev). */
+  liveStart(conn, spec, onEvent) {
+    requireTauri();
+    const ch = new window.__TAURI__.core.Channel();
+    ch.onmessage = onEvent;
+    return invoke("redis_live_start", { conn, spec, onEvent: ch });
+  },
+  analyzeStart(conn, spec, onEvent) {
+    requireTauri();
+    const ch = new window.__TAURI__.core.Channel();
+    ch.onmessage = onEvent;
+    return invoke("redis_analyze_start", { conn, spec, onEvent: ch });
+  },
+  liveStop: (id) => invoke("redis_live_stop", { id }).catch(() => false),
 };

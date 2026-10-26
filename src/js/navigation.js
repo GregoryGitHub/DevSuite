@@ -8,6 +8,7 @@ const PANELS = {
   json: document.getElementById("view-json"),
   db: document.getElementById("view-db"),
   rabbit: document.getElementById("view-rabbit"),
+  redis: document.getElementById("view-redis"),
   settings: document.getElementById("view-settings"),
 };
 

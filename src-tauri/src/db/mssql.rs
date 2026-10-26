@@ -19,6 +19,8 @@ const BINARY_PREVIEW: usize = 4096;
 /// O primeiro lote sai cedo para o grid pintar rápido; os seguintes são maiores.
 const FIRST_BATCH: usize = 100;
 const BATCH: usize = 1000;
+/// Nome da coluna do result set com o plano (SHOWPLAN_XML e STATISTICS XML).
+const SHOWPLAN_COLUMN: &str = "Microsoft SQL Server 2005 XML Showplan";
 
 pub struct MssqlDriver;
 
@@ -53,6 +55,9 @@ async fn open(cfg: &ConnConfig, database: &str, secret: Secret) -> DbResult<Conn
         config.trust_cert();
     }
     config.readonly(cfg.read_intent);
+    if cfg.long_running {
+        config.command_timeout(None);
+    }
     config.authentication(match secret {
         Secret::Password(pw) => AuthMethod::sql_server(&cfg.auth.user, pw),
         Secret::AccessToken(token) => AuthMethod::aad_token(token),
@@ -154,6 +159,20 @@ impl MssqlSession {
         Ok(row.and_then(|r| r.get::<i32, _>(0)).unwrap_or(0).max(0) as u32)
     }
 
+    /// Desliga os SET de análise. Se não der, a sessão não é confiável (o próximo comando
+    /// poderia só gerar plano em vez de executar): marca como quebrada para ser reaberta.
+    async fn reset_options(&mut self, off: &[&str]) {
+        if self.broken {
+            return;
+        }
+        for batch in off {
+            if self.batch(batch).await.is_err() {
+                self.broken = true;
+                return;
+            }
+        }
+    }
+
     async fn batch(&mut self, sql: &str) -> DbResult<()> {
         self.client
             .simple_query(sql)
@@ -176,18 +195,29 @@ impl MssqlSession {
         let mut count = 0u64;
         let mut truncated = false;
         let mut first = true;
+        // O result set atual é um plano de execução (vai como `Plan`, não para o grid).
+        let mut in_plan = false;
+        let mut plans = 0usize;
 
         while let Some(item) = stream.try_next().await? {
             match item {
+                QueryItem::Info { number, class, message, procedure, line, .. } => {
+                    send(sink, ExecEvent::Message { number, class, line, procedure, text: message })?;
+                }
                 QueryItem::RowsAffected { rows, command } => {
                     if is_dml_command(command) {
                         affected = Some(affected.unwrap_or(0) + rows);
                     }
                 }
                 QueryItem::Metadata(meta) => {
-                    if let Some(index) = current {
+                    if let Some(index) = current.take() {
                         flush(sink, index, &mut buf)?;
                         send(sink, ExecEvent::ResultEnd { index, row_count: count, truncated })?;
+                    }
+                    let cols = meta.columns();
+                    in_plan = cols.len() == 1 && cols[0].name() == SHOWPLAN_COLUMN;
+                    if in_plan {
+                        continue;
                     }
                     let index = meta.result_index();
                     current = Some(index);
@@ -197,6 +227,13 @@ impl MssqlSession {
                     summary.result_sets += 1;
                     let columns = meta.columns().iter().map(|c| column_meta(c.name(), c.column_type())).collect();
                     send(sink, ExecEvent::ResultStart { index, columns })?;
+                }
+                QueryItem::Row(row) if in_plan => {
+                    let xml = row.cells().next().map(|(_, data)| cell(data));
+                    if let Some(Value::String(xml)) = xml {
+                        send(sink, ExecEvent::Plan { index: plans, xml })?;
+                        plans += 1;
+                    }
                 }
                 QueryItem::Row(row) => {
                     if max_rows.is_some_and(|max| count >= max) {
@@ -220,6 +257,35 @@ impl MssqlSession {
         }
         Ok(affected)
     }
+}
+
+/// Lotes para ligar e desligar as opções de análise. `SET SHOWPLAN_XML` precisa ser o único
+/// comando do lote; com ele nada é executado, então as estatísticas não fazem sentido.
+fn session_options(opts: &ExecOptions) -> DbResult<(Vec<&'static str>, Vec<&'static str>)> {
+    let mut on = Vec::new();
+    let mut off = Vec::new();
+    match opts.plan.as_deref() {
+        Some("estimated") => {
+            on.push("SET SHOWPLAN_XML ON");
+            off.push("SET SHOWPLAN_XML OFF");
+            return Ok((on, off));
+        }
+        Some("actual") => {
+            on.push("SET STATISTICS XML ON");
+            off.push("SET STATISTICS XML OFF");
+        }
+        Some(other) => return Err(format!("Tipo de plano inválido: {other}")),
+        None => {}
+    }
+    if opts.stats_io {
+        on.push("SET STATISTICS IO ON");
+        off.push("SET STATISTICS IO OFF");
+    }
+    if opts.stats_time {
+        on.push("SET STATISTICS TIME ON");
+        off.push("SET STATISTICS TIME OFF");
+    }
+    Ok((on, off))
 }
 
 /// CurCmd (MS-TDS) de comandos que alteram linhas. SELECT (0xC1), atribuições de variável,
@@ -271,13 +337,24 @@ impl Session for MssqlSession {
     }
 
     async fn execute(&mut self, sql: &str, sink: &mut dyn EventSink, max_rows: Option<u64>) -> DbResult<ExecSummary> {
+        self.execute_with(sql, sink, max_rows, &ExecOptions::default()).await
+    }
+
+    async fn execute_with(&mut self, sql: &str, sink: &mut dyn EventSink, max_rows: Option<u64>, opts: &ExecOptions) -> DbResult<ExecSummary> {
+        let (on, off) = session_options(opts)?;
+        for batch in &on {
+            if let Err(e) = self.batch(batch).await {
+                self.reset_options(&off).await;
+                return Err(e);
+            }
+        }
         let started = Instant::now();
         let mut summary = ExecSummary::default();
-        match self.stream(sql, sink, max_rows, &mut summary).await {
-            Ok(affected) => summary.rows_affected = affected,
-            Err(e) => return Err(self.fail(e)),
-        }
+        let outcome = self.stream(sql, sink, max_rows, &mut summary).await.map_err(|e| self.fail(e));
         summary.elapsed_ms = started.elapsed().as_millis() as u64;
+        // Antes de qualquer outra consulta: com SHOWPLAN_XML ligado nada mais seria executado.
+        self.reset_options(&off).await;
+        summary.rows_affected = outcome?;
         summary.tran_count = self.tran_count().await.unwrap_or(0);
         Ok(summary)
     }

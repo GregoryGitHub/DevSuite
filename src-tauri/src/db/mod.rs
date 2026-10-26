@@ -73,7 +73,15 @@ async fn resolve_secret(app: &tauri::AppHandle, conn: &ConnConfig, password: Opt
 
 async fn open(app: &tauri::AppHandle, target: &Target, interactive: bool) -> DbResult<Box<dyn Session>> {
     let secret = resolve_secret(app, &target.conn, None, interactive).await?;
-    driver_for(&target.conn.driver)?.connect(&target.conn, &target.database, secret).await
+    let mut conn = target.conn.clone();
+    conn.long_running = is_long_running(&target.session_id);
+    driver_for(&conn.driver)?.connect(&conn, &target.database, secret).await
+}
+
+/// Sessões de consultas do usuário rodam sem tempo limite por resposta; as `meta:` (Explorer,
+/// autocomplete) mantêm o padrão do driver para não travar a árvore.
+fn is_long_running(session_id: &str) -> bool {
+    ["console:", "tab:", "cli:q:", "perf:"].iter().any(|p| session_id.starts_with(p))
 }
 
 fn slot(app: &tauri::AppHandle, session_id: &str) -> Slot {
@@ -257,6 +265,7 @@ pub async fn db_database_script(app: tauri::AppHandle, target: Target, options: 
 
 /// Executa SQL e envia os result sets em lotes pelo `on_event`.
 /// `max_rows` limita cada result set; as linhas excedentes são descartadas.
+/// `options`: plano de execução (estimado/real) e SET STATISTICS IO/TIME (só SQL Server).
 #[tauri::command]
 pub async fn db_execute(
     app: tauri::AppHandle,
@@ -264,8 +273,10 @@ pub async fn db_execute(
     query_id: String,
     sql: String,
     max_rows: Option<u64>,
+    options: Option<ExecOptions>,
     on_event: Channel<ExecEvent>,
 ) -> Result<ExecSummary, String> {
+    let options = options.unwrap_or_default();
     let slot = slot(&app, &target.session_id);
     let mut guard = slot.lock().await;
     let session = ready(&app, &target, &mut guard, false).await?;
@@ -274,7 +285,7 @@ pub async fn db_execute(
     app.state::<DbInflight>().0.lock().unwrap().insert(query_id.clone(), cancel_tx);
     let mut sink = ChannelSink(on_event);
     let outcome = tokio::select! {
-        r = session.execute(&sql, &mut sink, max_rows) => Some(r),
+        r = session.execute_with(&sql, &mut sink, max_rows, &options) => Some(r),
         _ = cancel_rx => None,
     };
     app.state::<DbInflight>().0.lock().unwrap().remove(&query_id);

@@ -276,14 +276,14 @@ function sparkline(series) {
   return `<svg class="rmq-spark" viewBox="0 0 ${SPARK_W} ${SPARK_H}" preserveAspectRatio="none" aria-hidden="true">${paths}</svg>`;
 }
 
-function chartCard(title, series, fmt) {
+export function chartCard(title, series, fmt) {
   const legend = series
     .map((s) => `<span class="rmq-legend ${s.cls}"><i></i>${esc(s.label)} <b>${fmt(s.values[s.values.length - 1] ?? 0)}</b></span>`)
     .join("");
   return el("div.rmq-card.rmq-chart", { html: `<div class="rmq-card-title">${esc(title)}</div>${sparkline(series)}<div class="rmq-legends">${legend}</div>` });
 }
 
-function tile(label, value, { sub = "", cls = "", onclick, title = "" } = {}) {
+export function tile(label, value, { sub = "", cls = "", onclick, title = "" } = {}) {
   return el(
     onclick ? "button.rmq-tile" : "div.rmq-tile",
     { class: `rmq-tile ${cls}`, type: onclick ? "button" : undefined, onclick, title },

@@ -42,6 +42,11 @@ pub struct ConnConfig {
     /// MongoDB: aceitar certificado TLS inválido/autoassinado.
     #[serde(default)]
     pub tls_insecure: bool,
+    /// Sessão de consultas do usuário (console, aba, CLI, desempenho): sem tempo limite por
+    /// resposta, porque uma consulta lenta pode ficar minutos sem mandar nada (o Cancelar fecha
+    /// o socket). Definido pelo `mod.rs` a partir do prefixo da sessão; não vem do JSON.
+    #[serde(skip)]
+    pub long_running: bool,
 }
 
 fn default_driver() -> String {
@@ -99,8 +104,24 @@ pub enum ExecEvent {
     Docs { index: usize, docs: Vec<Value> },
     /// Fim de um result set.
     ResultEnd { index: usize, row_count: u64, truncated: bool },
+    /// Mensagem informativa do servidor (PRINT, SET STATISTICS IO/TIME, avisos).
+    Message { number: u32, class: u8, line: u32, procedure: String, text: String },
+    /// Plano de execução (SHOWPLAN XML) de um comando: vai fora do grid.
+    Plan { index: usize, xml: String },
     /// Fim da execução (último evento, enviado pelo comando mesmo com erro ou cancelamento).
     Done,
+}
+
+/// Opções de uma execução (análise de desempenho; só SQL Server).
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct ExecOptions {
+    /// None | "estimated" (SHOWPLAN_XML: nada é executado) | "actual" (STATISTICS XML).
+    pub plan: Option<String>,
+    /// SET STATISTICS IO (leituras por tabela, como mensagens).
+    pub stats_io: bool,
+    /// SET STATISTICS TIME (CPU/decorrido de compilação e execução, como mensagens).
+    pub stats_time: bool,
 }
 
 /// Resumo devolvido pelo comando de execução.
@@ -303,6 +324,15 @@ pub trait Session: Send {
     /// pelo frontend a partir da sintaxe do mongosh) enviando os resultados para `sink`.
     /// `max_rows` limita as linhas de cada result set (o resto é cancelado no servidor).
     async fn execute(&mut self, sql: &str, sink: &mut dyn EventSink, max_rows: Option<u64>) -> DbResult<ExecSummary>;
+
+    /// `execute` com as opções de análise (plano, estatísticas). Bancos sem plano de execução
+    /// recusam `plan` e ignoram as estatísticas.
+    async fn execute_with(&mut self, sql: &str, sink: &mut dyn EventSink, max_rows: Option<u64>, opts: &ExecOptions) -> DbResult<ExecSummary> {
+        if opts.plan.is_some() {
+            return Err("Plano de execução não disponível para este banco".into());
+        }
+        self.execute(sql, sink, max_rows).await
+    }
 
     /// Chamado depois que o future de `execute` foi descartado no meio da resposta.
     /// A sessão deve se marcar como quebrada se não puder ser reaproveitada com segurança.

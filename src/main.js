@@ -8,6 +8,7 @@ import { initHttp, setHttpData } from "./js/components/http.js";
 import { initJsonFormatter } from "./js/components/jsonFormatter.js";
 import { initDb, setDbData } from "./js/components/db.js";
 import { initRabbit, loadRabbit } from "./js/components/rabbit.js";
+import { initRedis, loadRedis } from "./js/components/redis.js";
 import { initSettings, initSettingsSync, updateSettingsUI } from "./js/components/settings.js";
 import { initNotesStorage } from "./js/components/notesStorage.js";
 import { initWindowControls } from "./js/components/windowControls.js";
@@ -54,6 +55,26 @@ async function load() {
 
   // rabbit.db (SQLite): conexões, estado da interface e gravações.
   if (runs("rabbit")) await loadRabbit();
+
+  // redis.json: conexões (sem segredos), abas e histórico do console.
+  if (runs("redis")) await loadRedis();
+}
+
+/** CLI `devsuite` (js/cli/): handlers dos apps desta janela, registrados depois de carregar os dados. */
+async function initCli() {
+  const { registerCli, initCliBridge } = await import("./js/cli/bridge.js");
+  const apps = {
+    notes: () => import("./js/cli/notesCli.js").then((m) => m.notesCli),
+    tasks: () => import("./js/cli/tasksCli.js").then((m) => m.tasksCli),
+    http: () => import("./js/cli/httpCli.js").then((m) => m.httpCli),
+    db: () => import("./js/cli/dbCli.js").then((m) => m.dbCli),
+    rabbit: () => import("./js/cli/rabbitCli.js").then((m) => m.rabbitCli),
+    redis: () => import("./js/cli/redisCli.js").then((m) => m.redisCli),
+  };
+  for (const [view, load] of Object.entries(apps)) {
+    if (runs(view)) registerCli(view, await load());
+  }
+  await initCliBridge();
 }
 
 function initGlobalShortcutListeners() {
@@ -79,6 +100,7 @@ function main() {
   if (runs("json")) initJsonFormatter();
   if (runs("db")) initDb();
   if (runs("rabbit")) initRabbit();
+  if (runs("redis")) initRedis();
   initSettings();
   initSettingsSync();
   if (!SOLO_APP) initNotesStorage();
@@ -87,7 +109,9 @@ function main() {
   initGlobalShortcutListeners();
   initDetach();
 
-  load();
+  load()
+    .then(initCli)
+    .catch((e) => console.error("cli init failed", e));
 }
 
 main();

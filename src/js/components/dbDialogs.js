@@ -360,3 +360,161 @@ export function sqlPreviewDialog({ title, sql, onCopy, onOpenInConsole, lang = "
     ].filter(Boolean),
   });
 }
+
+/**
+ * Salvar/editar uma consulta: nome, pasta, descrição, conexão e banco.
+ * opts: { title, query: { name, folder, description, conn_id, database }, connections, folders(connId, database),
+ *         databases(connId) → Promise<string[]>, exists(values) → bool (nome repetido na mesma pasta) }
+ * Resolve com os valores ou null.
+ */
+export function saveQueryDialog({ title, query, connections, folders, databases, exists }) {
+  return new Promise((resolve) => {
+    const v = { ...query };
+    let answered = false;
+    const status = el("div.db-test", { hidden: true });
+    const nameInput = input(v.name, { placeholder: "ex.: Pedidos do cliente", oninput: (e) => (v.name = e.target.value) });
+    const folderList = el("datalist", { id: "db-query-folders" });
+    const folderInput = input(v.folder, { placeholder: "opcional; subpastas com /  (ex.: Relatórios/Mensal)", oninput: (e) => (v.folder = e.target.value) });
+    folderInput.setAttribute("list", folderList.id);
+    const dbList = el("datalist", { id: "db-query-dbs" });
+    const dbInput = input(v.database, { placeholder: "banco padrão da conexão", oninput: (e) => ((v.database = e.target.value), fillFolders()) });
+    dbInput.setAttribute("list", dbList.id);
+    const desc = el("textarea.hx-code-input.db-query-desc", { rows: 3, placeholder: "Para que serve, de onde vêm os parâmetros…", spellcheck: false });
+    desc.value = v.description || "";
+    desc.addEventListener("input", () => (v.description = desc.value));
+    const connSelect = selectEl(
+      connections.map((c) => [c.id, connLabel(c)]),
+      v.conn_id,
+      (id) => ((v.conn_id = id), fillDatabases(), fillFolders()),
+    );
+    function fillFolders() {
+      folderList.innerHTML = "";
+      for (const f of folders(v.conn_id, v.database.trim())) folderList.append(el("option", { value: f }));
+    }
+    async function fillDatabases() {
+      dbList.innerHTML = "";
+      const list = await databases(v.conn_id).catch(() => []);
+      for (const name of list) dbList.append(el("option", { value: name }));
+    }
+    fillFolders();
+    fillDatabases();
+    const save = () => {
+      v.name = v.name.trim();
+      v.database = v.database.trim();
+      if (!v.name) return showProblem("Informe o nome da consulta.");
+      if (exists?.(v)) return showProblem("Já existe uma consulta com esse nome nesta pasta.");
+      answered = true;
+      modal.close();
+      resolve(v);
+    };
+    function showProblem(text) {
+      status.hidden = false;
+      status.className = "db-test bad";
+      status.textContent = text;
+    }
+    const body = el(
+      "div.db-conn-form",
+      {},
+      field("Nome", nameInput),
+      field("Pasta", folderInput),
+      el("div.db-row2", {}, field("Conexão", connSelect), field("Banco", dbInput)),
+      field("Descrição", desc),
+      folderList,
+      dbList,
+      status,
+    );
+    body.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName === "INPUT") {
+        e.preventDefault();
+        save();
+      }
+    });
+    modal.open({
+      title,
+      iconCls: "fa-solid fa-bookmark",
+      body,
+      footer: [btn("Cancelar", modal.close), btn("Salvar", save, "hx-btn.primary")],
+      onClose: () => !answered && resolve(null),
+    });
+    nameInput.focus();
+    nameInput.select();
+  });
+}
+
+/**
+ * Valores dos parâmetros antes de executar. names: [nome]; saved: { nome: { type, last } };
+ * preview(values) → texto final (lança ParamError com valor inválido). Resolve com
+ * { nome: { type, value } } ou null.
+ */
+export function paramsDialog({ names, saved = {}, types, preview, lang = "sql" }) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const values = {};
+    const pre = el("pre.db-sql-preview.db-params-preview");
+    const status = el("div.db-test", { hidden: true });
+    const rows = names.map((name, i) => {
+      const v = (values[name] = { type: saved[name]?.type || "auto", value: saved[name]?.last ?? "" });
+      const valueInput = input(v.value, { placeholder: "valor", oninput: (e) => ((v.value = e.target.value), update()) });
+      const typeSel = selectEl(types, v.type, (t) => ((v.type = t), (valueInput.disabled = t === "null"), update()));
+      valueInput.disabled = v.type === "null";
+      if (i === 0) setTimeout(() => (valueInput.focus(), valueInput.select()), 0);
+      return el("div.db-param", {}, el("span.db-param-name", { title: name }, name), valueInput, typeSel);
+    });
+    function update() {
+      try {
+        pre.innerHTML = highlightCode(preview(values), lang === "mongo" ? "javascript" : "sql");
+        status.hidden = true;
+        return true;
+      } catch (e) {
+        status.hidden = false;
+        status.className = "db-test bad";
+        status.textContent = e.message || String(e);
+        return false;
+      }
+    }
+    const run = () => {
+      if (!update()) return;
+      answered = true;
+      modal.close();
+      resolve(values);
+    };
+    const body = el("div.db-params", {}, el("div.db-params-list", {}, rows), status, pre);
+    body.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.target.tagName === "INPUT" || e.ctrlKey)) {
+        e.preventDefault();
+        run();
+      }
+    });
+    modal.open({
+      title: names.length === 1 ? "Parâmetro da consulta" : "Parâmetros da consulta",
+      iconCls: "fa-solid fa-sliders",
+      body,
+      wide: true,
+      footer: [btn("Cancelar", modal.close), btn([icon("fa-solid fa-play"), " Executar"], run, "hx-btn.primary")],
+      onClose: () => !answered && resolve(null),
+    });
+    update();
+  });
+}
+
+/** Pede um texto (renomear pasta etc.). Resolve com o texto ou null. */
+export function dbPrompt({ title, label, value = "", confirmLabel = "OK" }) {
+  return new Promise((resolve) => {
+    let answered = false;
+    const box = input(value);
+    const ok = () => {
+      answered = true;
+      modal.close();
+      resolve(box.value);
+    };
+    box.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        ok();
+      }
+    });
+    modal.open({ title, body: field(label, box), footer: [btn("Cancelar", modal.close), btn(confirmLabel, ok, "hx-btn.primary")], onClose: () => !answered && resolve(null) });
+    box.focus();
+    box.select();
+  });
+}

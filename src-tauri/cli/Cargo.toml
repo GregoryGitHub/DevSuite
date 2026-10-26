@@ -1,0 +1,12 @@
+[package]
+name = "devsuite-cli"
+version = "1.2.0"
+edition = "2021"
+description = "CLI do Dev Suite: notas, tarefas, HTTP, bancos de dados e RabbitMQ pela linha de comando"
+
+[[bin]]
+name = "devsuite"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }

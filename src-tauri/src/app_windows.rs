@@ -1,4 +1,4 @@
-//! Janelas desatachadas: cada app da suíte (Tarefas, Notas, HTTP, JSON, Banco, RabbitMQ) pode
+//! Janelas desatachadas: cada app da suíte (Tarefas, Notas, HTTP, JSON, Banco, RabbitMQ, Redis) pode
 //! sair da janela principal para uma janela própria, `app-<id>`, que carrega o mesmo
 //! `index.html` só com aquele app (`window.__DEVSUITE_APP__`).
 //!
@@ -49,6 +49,7 @@ pub const APPS: &[AppDef] = &[
     app_def!("json", "Formatter JSON"),
     app_def!("db", "Banco de dados"),
     app_def!("rabbit", "RabbitMQ"),
+    app_def!("redis", "Redis"),
 ];
 
 const LABEL_PREFIX: &str = "app-";

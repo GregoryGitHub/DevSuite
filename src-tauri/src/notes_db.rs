@@ -589,6 +589,15 @@ pub async fn notes_vault_refresh(app: tauri::AppHandle) -> Result<crate::notes_v
     .await
 }
 
+/// Pasta do cofre aberto (controle de versão, notes_git.rs). Erro no banco local.
+pub async fn active_vault_root(app: tauri::AppHandle) -> Result<PathBuf, String> {
+    with_backend(app, |b| match b {
+        Backend::Sqlite(_) => Err("As notas não estão num cofre.".into()),
+        Backend::Vault(v) => Ok(v.root.clone()),
+    })
+    .await
+}
+
 /// Cofre: arquivos que não são notas (imagens/anexos), relativos ao cofre.
 #[tauri::command]
 pub async fn notes_vault_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {

@@ -266,7 +266,7 @@ fn host_name() -> String {
         .unwrap_or_else(|| "outro".into())
 }
 
-fn write_atomic(path: &Path, text: &str) -> Res<()> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> Res<()> {
     let dir = path.parent().ok_or("caminho inválido")?;
     io(fs::create_dir_all(dir), dir)?;
     let tmp = dir.join(format!(".{}.todors-tmp", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()));
@@ -954,7 +954,7 @@ impl Vault {
     }
 }
 
-fn dir_has_files(dir: &Path) -> bool {
+pub(crate) fn dir_has_files(dir: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else { return false };
     entries.flatten().any(|e| match e.file_type() {
         Ok(ft) if ft.is_dir() => dir_has_files(&e.path()),

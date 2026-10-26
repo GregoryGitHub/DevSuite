@@ -45,6 +45,8 @@ export function initSettings() {
     saveSettingsApi(state.settings);
   });
 
+  initCliSetting();
+
   settingsBar.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action]");
     if (btn) BAR_ACTIONS[btn.dataset.action]?.();
@@ -59,6 +61,37 @@ export function initSettings() {
 
     showMainView(targetView);
   });
+}
+
+/** CLI `devsuite` (src-tauri/src/cli): onde está, se está no PATH, e as skills para agentes. */
+function initCliSetting() {
+  const invoke = window.__TAURI__?.core?.invoke;
+  const info = document.getElementById("setting-cli-info");
+  const status = document.getElementById("setting-cli-status");
+  const buttons = { path: document.getElementById("setting-cli-path"), skills: document.getElementById("setting-cli-skills") };
+  const show = (text, ok) => {
+    status.hidden = !text;
+    status.textContent = text || "";
+    status.classList.toggle("ok", !!ok);
+  };
+  const refresh = async () => {
+    const r = invoke ? await invoke("cli_info").catch(() => null) : null;
+    info.textContent = r?.exe ? `${r.exe}${r.on_path ? " · no PATH" : " · fora do PATH"}` : "CLI não encontrada ao lado do app (instale pelo instalador).";
+    for (const b of Object.values(buttons)) b.disabled = !r?.exe;
+    buttons.path.hidden = !!r?.on_path;
+  };
+  for (const [action, btn] of Object.entries(buttons)) {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        show(await invoke("cli_setup", { action }), true);
+      } catch (e) {
+        show(String(e), false);
+      }
+      await refresh();
+    });
+  }
+  if (!SOLO_APP) refresh();
 }
 
 export function updateSettingsUI() {

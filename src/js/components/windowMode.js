@@ -4,7 +4,7 @@ import { showMainView } from "../navigation.js";
 import { SOLO_APP, isSolo } from "../windowContext.js";
 import { reattachSelf } from "./detach.js";
 
-// Tray mode (compact window by the tray) <-> desktop mode (large Tasks/Notes/HTTP/JSON/DB/RabbitMQ window).
+// Tray mode (compact window by the tray) <-> desktop mode (large Tasks/Notes/HTTP/JSON/DB/RabbitMQ/Redis window).
 
 /** Views reachable from the desktop toolbar switcher (in order). */
 const DESKTOP_VIEWS = [
@@ -14,6 +14,7 @@ const DESKTOP_VIEWS = [
   { view: "json", title: "Formatter JSON", icon: "fa-solid fa-code" },
   { view: "db", title: "Banco de dados", icon: "fa-solid fa-database" },
   { view: "rabbit", title: "RabbitMQ", icon: "fa-solid fa-envelopes-bulk" },
+  { view: "redis", title: "Redis", icon: "fa-solid fa-cubes-stacked" },
   { view: "settings", title: "Configurações", icon: "fa-solid fa-gear" },
 ];
 

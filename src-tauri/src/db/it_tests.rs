@@ -60,6 +60,7 @@ fn config(database: &str) -> Option<(ConnConfig, String)> {
         connect_timeout_s: 15,
         uri: String::new(),
         tls_insecure: false,
+        long_running: true,
     };
     Some((cfg, parts[3].to_string()))
 }
@@ -231,6 +232,67 @@ async fn it_end_to_end() {
     let mut s = session("TodoRsIt").await.unwrap();
     let (c, _) = exec(&mut s, "SELECT COUNT(*) FROM dbo.patients WHERE name = N'cancelado'").await;
     assert_eq!(c.rows(0), vec![vec![json!(0)]], "transação desfeita pelo servidor");
+    s.close().await;
+}
+
+/// Análise de desempenho: mensagens (PRINT, STATISTICS IO/TIME) e planos estimado/real.
+#[tokio::test]
+async fn it_plans_and_messages() {
+    let Some(mut master) = session("master").await else {
+        eprintln!("TODORS_MSSQL_TEST não definido; teste ignorado");
+        return;
+    };
+    exec(&mut master, SETUP).await;
+    master.close().await;
+    let mut s = session("TodoRsIt").await.unwrap();
+    exec(&mut s, "IF OBJECT_ID('dbo.perf_it') IS NOT NULL DROP TABLE dbo.perf_it; CREATE TABLE dbo.perf_it (id int PRIMARY KEY, v int);                   INSERT INTO dbo.perf_it SELECT TOP 500 ROW_NUMBER() OVER (ORDER BY (SELECT 1)), 1 FROM sys.objects a CROSS JOIN sys.objects b").await;
+
+    let messages = |c: &Collect| -> Vec<(u32, String)> {
+        c.0.iter().filter_map(|e| match e { ExecEvent::Message { number, text, .. } => Some((*number, text.clone())), _ => None }).collect()
+    };
+    let plans = |c: &Collect| -> Vec<String> {
+        c.0.iter().filter_map(|e| match e { ExecEvent::Plan { xml, .. } => Some(xml.clone()), _ => None }).collect()
+    };
+
+    // PRINT vira mensagem.
+    let (c, _) = exec(&mut s, "PRINT 'olá'; SELECT 1").await;
+    assert_eq!(messages(&c).last().map(|m| m.1.as_str()), Some("olá"));
+
+    // Estimado: devolve o plano e não executa.
+    let mut c = Collect(Vec::new());
+    let opts = ExecOptions { plan: Some("estimated".into()), ..Default::default() };
+    let sum = s.execute_with("INSERT INTO dbo.perf_it VALUES (100000, 1); SELECT COUNT(*) FROM dbo.perf_it WHERE v = 1", &mut c, None, &opts).await.unwrap();
+    assert_eq!(sum.result_sets, 0);
+    let p = plans(&c);
+    assert_eq!(p.len(), 1, "um plano por lote no SHOWPLAN_XML");
+    assert!(p[0].contains("<ShowPlanXML") && p[0].contains("StatementType=\"INSERT\""), "{}", &p[0][..200.min(p[0].len())]);
+    let (c, _) = exec(&mut s, "SELECT COUNT(*) FROM dbo.perf_it WHERE id = 100000").await;
+    assert_eq!(c.rows(0), vec![vec![json!(0)]], "SHOWPLAN não executa e foi desligado");
+
+    // Real + IO/TIME: resultado normal, plano com ActualRows e mensagens de estatística.
+    let mut c = Collect(Vec::new());
+    let opts = ExecOptions { plan: Some("actual".into()), stats_io: true, stats_time: true };
+    let sum = s.execute_with("SELECT COUNT(*) FROM dbo.perf_it WHERE v = 1", &mut c, None, &opts).await.unwrap();
+    assert_eq!(sum.result_sets, 1);
+    assert_eq!(c.rows(0), vec![vec![json!(500)]]);
+    let p = plans(&c);
+    assert_eq!(p.len(), 1);
+    assert!(p[0].contains("ActualRows=\"500\""), "plano real");
+    let nums: Vec<u32> = messages(&c).iter().map(|m| m.0).collect();
+    assert!(nums.contains(&3615), "STATISTICS IO: {nums:?}");
+    assert!(nums.contains(&3612), "STATISTICS TIME: {nums:?}");
+
+    // Depois as opções estão desligadas.
+    let (c, sum) = exec(&mut s, "SELECT COUNT(*) FROM dbo.perf_it").await;
+    assert_eq!(sum.result_sets, 1);
+    assert!(plans(&c).is_empty() && !messages(&c).iter().any(|m| m.0 == 3615));
+
+    // Erro de compilação no estimado: erro devolvido e a sessão volta ao normal.
+    let mut c = Collect(Vec::new());
+    let opts = ExecOptions { plan: Some("estimated".into()), ..Default::default() };
+    assert!(s.execute_with("SELECT * FROM nao_existe_xyz", &mut c, None, &opts).await.is_err());
+    let (c, _) = exec(&mut s, "SELECT 2").await;
+    assert_eq!(c.rows(0), vec![vec![json!(2)]]);
     s.close().await;
 }
 
@@ -472,6 +534,7 @@ async fn mongo_session(database: &str) -> Option<Box<dyn Session>> {
         connect_timeout_s: 10,
         uri: uri.into(),
         tls_insecure: false,
+        long_running: true,
     };
     Some(driver_for("mongo").unwrap().connect(&cfg, database, Secret::Password(pw.into())).await.expect("connect mongo"))
 }

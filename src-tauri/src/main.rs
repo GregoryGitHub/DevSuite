@@ -1,17 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_windows;
+mod cli;
 mod db;
 mod http;
 mod md_files;
 mod note_images;
 mod note_pdf;
 mod notes_db;
+mod notes_git;
 mod notes_vault;
 mod persist;
 #[cfg(windows)]
 mod quicklook;
 mod rabbit;
+mod redis_app;
 
 use std::fs;
 use std::path::PathBuf;
@@ -440,6 +443,10 @@ fn main() {
     tauri::Builder::default()
         // Primeiro plugin: uma 2ª execução (ex.: atalho fixado "--app=http") só avisa esta.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // A CLI (`devsuite`) iniciando o app que já está aberto: nada a mostrar.
+            if argv.iter().any(|a| a == "--background") {
+                return;
+            }
             // Dois cliques num .md (associação de arquivo): abre a janela daquele arquivo.
             if let Some(path) = md_files::md_arg(&argv, std::path::Path::new(&cwd)) {
                 md_files::open_file_later(app, path);
@@ -461,6 +468,7 @@ fn main() {
         .manage(DesktopMode::default())
         .manage(app_windows::AppWindows::default())
         .manage(notes_db::NotesDb::default())
+        .manage(notes_git::GitState::default())
         .manage(db::DbSessions::default())
         .manage(db::DbInflight::default())
         .manage(db::EntraTokens::default())
@@ -470,6 +478,10 @@ fn main() {
         .manage(rabbit::MgmtClients::default())
         .manage(rabbit::RmqPasswords::default())
         .manage(rabbit::RmqCaptures::default())
+        .manage(redis_app::RedisClients::default())
+        .manage(redis_app::RedisSecrets::default())
+        .manage(redis_app::RedisLive::default())
+        .manage(cli::CliState::default())
         .invoke_handler(tauri::generate_handler![
             load_kanban_data,
             save_kanban_data,
@@ -492,6 +504,27 @@ fn main() {
             notes_db::notes_set_storage,
             notes_db::notes_vault_refresh,
             notes_db::notes_vault_files,
+            notes_git::notes_vault_create,
+            notes_git::git_info,
+            notes_git::git_status,
+            notes_git::git_init,
+            notes_git::git_file_pair,
+            notes_git::git_write_file,
+            notes_git::git_commit,
+            notes_git::git_rollback,
+            notes_git::git_ignore,
+            notes_git::git_log,
+            notes_git::git_commit_files,
+            notes_git::git_remote_set,
+            notes_git::git_remote_test,
+            notes_git::git_fetch,
+            notes_git::git_pull,
+            notes_git::git_push,
+            notes_git::git_cancel,
+            notes_git::git_conflict,
+            notes_git::git_resolve,
+            notes_git::git_merge_abort,
+            notes_git::git_set_identity,
             load_settings,
             save_settings,
             hide_window,
@@ -563,7 +596,30 @@ fn main() {
             rabbit::rmq_messages_delete,
             rabbit::rmq_messages_delete_matching,
             rabbit::rmq_messages_save,
-            rabbit::rmq_store_stats
+            rabbit::rmq_store_stats,
+            redis_app::load_redis_data,
+            redis_app::save_redis_data,
+            redis_app::redis_set_secret,
+            redis_app::redis_has_secrets,
+            redis_app::redis_forget_secrets,
+            redis_app::redis_test,
+            redis_app::redis_connect,
+            redis_app::redis_disconnect,
+            redis_app::redis_close_session,
+            redis_app::redis_nodes,
+            redis_app::redis_exec,
+            redis_app::redis_pipeline,
+            redis_app::redis_scan,
+            redis_app::redis_live_start,
+            redis_app::redis_analyze_start,
+            redis_app::redis_live_stop,
+            cli::cli_ready,
+            cli::cli_reply,
+            cli::cli_event,
+            cli::cli_info,
+            cli::cli_setup,
+            cli::vaults::cli_store_read,
+            cli::vaults::cli_vault_create
         ])
         .register_asynchronous_uri_scheme_protocol(note_images::SCHEME, |ctx, request, responder| {
             // Leitura do arquivo fora da thread da UI.
@@ -573,6 +629,9 @@ fn main() {
             });
         })
         .on_window_event(|window, event| {
+            if let WindowEvent::Destroyed = event {
+                cli::window_gone(window.app_handle(), window.label());
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 // Desatachada: grava e volta para a principal. Arquivo .md: grava e fecha.
@@ -632,12 +691,14 @@ fn main() {
             let launch_app = app_windows::app_arg(&args);
             // Aberto por dois cliques num .md: só a janela do arquivo (a principal fica na bandeja).
             let launch_md = md_files::md_arg(&args, &std::env::current_dir().unwrap_or_default());
-            if !settings.start_minimized && launch_app.is_none() && launch_md.is_none() {
+            // Iniciado pela CLI (`devsuite`): fica na bandeja.
+            let background = args.iter().any(|a| a == "--background");
+            if !settings.start_minimized && !background && launch_app.is_none() && launch_md.is_none() {
                 show_window(app.handle(), None);
             }
             // Apps que estavam soltos ao sair reabrem nas suas janelas.
             for id in &detached {
-                let show = !settings.start_minimized || launch_app == Some(id.as_str());
+                let show = (!settings.start_minimized && !background) || launch_app == Some(id.as_str());
                 if let Err(e) = app_windows::open(app.handle(), id, show) {
                     eprintln!("falha ao reabrir {id}: {e}");
                 }
@@ -648,6 +709,7 @@ fn main() {
             if let Some(path) = launch_md {
                 md_files::open_file(app.handle(), &path)?;
             }
+            cli::start(app.handle());
             #[cfg(windows)]
             quicklook::set_enabled(app.handle(), settings.md_quicklook);
             if settings.autostart {

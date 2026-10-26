@@ -7,7 +7,7 @@ Este documento fornece um mapa conciso e abrangente da arquitetura, estrutura de
 ## 1. Visão Geral do Projeto
 
 - **Nome**: Dev Suite (`productName`; executável `dev-suite`). O repositório, o crate (`todo-rs`), o `identifier` (`com.todors.app`, que define a pasta de dados) e o serviço do cofre de senhas (`todo-rs`) mantêm o nome antigo: trocá-los perderia dados e senhas.
-- **Tipo**: Aplicativo de produtividade (Tarefas em board kanban com Pomodoro, Notas Rápidas, Timer Pomodoro, cliente HTTP estilo Postman, Formatter JSON, cliente de banco de dados estilo DataGrip — SQL Server, Azure SQL e MongoDB — e monitor/depurador de RabbitMQ) para Desktop.
+- **Tipo**: Aplicativo de produtividade com CLI (`devsuite`, para scripts e agentes de IA) (Tarefas em board kanban com Pomodoro, Notas Rápidas, Timer Pomodoro, cliente HTTP estilo Postman, Formatter JSON, cliente de banco de dados estilo DataGrip — SQL Server, Azure SQL e MongoDB — monitor/depurador de RabbitMQ e cliente Redis — standalone, Cluster, Sentinel, TLS e túnel SSH) para Desktop.
 - **Tecnologias**:
   - **Frontend**: HTML5, CSS3 Vanilla (com variáveis CSS e design moderno), JavaScript nativo (ES Modules).
   - **Backend / Desktop Frame**: Rust + Tauri v2.
@@ -25,31 +25,39 @@ todo-rs/
 ├── build_linux.sh             # Script de build de release para Linux (.deb, .rpm, .AppImage)
 ├── build_windows.ps1          # Script de build de release para Windows (.exe/.msi)
 ├── build_windows.sh           # Script de cross-compilação para Windows via Linux
+├── build_cli.ps1 / build_cli.sh # Compila a CLI `devsuite` para src-tauri/binaries/devsuite-<target> (externalBin; chamados pelos scripts de build e pelo release.yml)
+├── skills/                    # Skills para agentes de IA (SKILL.md: devsuite, -notes, -tasks, -http, -db, -rabbit, -redis), embutidas na CLI (`devsuite skills install`)
 ├── dev-suite.svg              # Ícone fonte do app: bloco cinza com a grade 2×2 da suíte e um prompt `>_` (gerado em src-tauri/icons via `_gen_icons.ps1`, que também gera a bandeja `tray_*.svg` e os ícones de `icons/apps`)
 ├── _gen_icons.ps1             # Gera todos os ícones do bundle com `cargo tauri icon` a partir do SVG (e os de cada app em src-tauri/icons/apps e de tipos de arquivo em src-tauri/icons/files)
 ├── clean.sh                   # Script para limpar cache de build no Linux (cargo clean)
 ├── clean.ps1                  # Script para limpar cache de build no Windows
 ├── tests/kanban.test.mjs     # Testes do board das Tarefas: migração do todos.json, mover cards, colunas, prazos, filtros, Pomodoro (`node tests/kanban.test.mjs`)
 ├── tests/db-utils.test.mjs    # Testes dos utilitários da aba Banco (`node tests/db-utils.test.mjs`)
+├── tests/sqlplan.test.mjs     # Planos de execução (parser, custos, diagnósticos, layout), STATISTICS IO/TIME e SQL das DMVs (`node tests/sqlplan.test.mjs`; planos reais em tests/fixtures/plans/*.sqlplan)
 ├── tests/mongo.test.mjs       # Testes do parser mongosh e da conversão de documentos (`node tests/mongo.test.mjs`)
 ├── tests/code-block.test.mjs  # Testes dos blocos de código das Notas: dobras, realce, linguagens (`node tests/code-block.test.mjs`)
 ├── tests/rabbit.test.mjs      # Testes dos utilitários da aba RabbitMQ (`node tests/rabbit.test.mjs`)
+├── tests/redis.test.mjs       # Testes do app Redis: linha de comando redis-cli, formato RESP, árvore de chaves, INFO/CLIENT LIST/SLOWLOG/MONITOR, URL (`node tests/redis.test.mjs`)
 ├── tests/zettel.test.mjs      # Testes do Zettelkasten das Notas: links, propriedades/YAML, grafo, busca, layout (`node tests/zettel.test.mjs`)
 ├── tests/folders.test.mjs     # Subpastas (Notas/HTTP), importação de pasta de Markdown, Postman aninhado (`node tests/folders.test.mjs`)
 ├── tests/vault.test.mjs       # Modo cofre das Notas: nomes de arquivo, caminhos de imagens, front-matter (`node tests/vault.test.mjs`)
 ├── tests/mdfile.test.mjs      # .md de fora das Notas: front-matter/CRLF/BOM preservados, URLs de imagem `f/` (`node tests/mdfile.test.mjs`)
+├── tests/textdiff.test.mjs    # Diff do git das Notas: Myers por linha, palavras, dobras, reverter trecho, merge 3 vias (`node tests/textdiff.test.mjs`)
+├── tests/cli.test.mjs         # CLI: utilitários (pick, SQL somente leitura, prazos, auth), commands.json x handlers, exemplos das skills (`node tests/cli.test.mjs`)
 ├── src/                       # Frontend da Aplicação
 │   ├── index.html             # Estrutura HTML principal (views, modais e barra de navegação)
 │   ├── theme.css              # Tokens de tema claro/escuro (html[data-theme]) e paleta de realce --syn-*
 │   ├── styles.css             # Estilos CSS globais, modais, configurações e layout da bandeja
 │   ├── notes.css              # Estilos das Notas (modo bandeja compacto + modo desktop estilo macOS)
 │   ├── zettel.css             # Notas: chips de link [[ ]], prévia, painel de propriedades, rodapé de links e grafo
+│   ├── git.css                # Notas (cofre): painel Git da barra lateral, diff estilo JetBrains, diálogos do git
 │   ├── http.css               # Estilos da aba HTTP (reaproveita o layout .notes-app/.nt-* das Notas)
 │   ├── json.css               # Estilos do Formatter JSON
 │   ├── tasks.css              # Board das Tarefas: colunas, cards, drag & drop, barra de foco, detalhe (bandeja = abas de coluna)
 │   ├── code.css               # Editor de código compartilhado (.ce) e tokens de realce (.tok-*)
 │   ├── db.css                 # Aba Banco: Explorer, abas, DataGrid, console, log e diálogos
 │   ├── rabbit.css             # Aba RabbitMQ (reaproveita .db-app/.hx-*): seções, tabelas, mensagens, gravações
+│   ├── redis.css              # App Redis (reaproveita .db-app/.rmq-*/.hx-*): árvore de chaves, editores por tipo, console, monitor, pub/sub, memória
 │   ├── main.js                # Entry point JS: inicialização (todos os apps ou só o da janela desatachada) e eventos globais
 │   ├── vendor/mermaid/        # Mermaid 11 (UMD, MIT) carregado sob demanda pelos diagramas das Notas (offline)
 │   └── js/                    # Módulos JS organizados por responsabilidade
@@ -59,6 +67,15 @@ todo-rs/
 │       ├── navigation.js      # Troca de view principal (dispara o evento "mainviewchange"); app solto = foca a janela dele
 │       ├── windowContext.js   # SOLO_APP: app desta janela desatachada (null na principal), DETACHABLE
 │       ├── appLifecycle.js    # registerApp(view, { flush, reload, blocker }): gravar/reler ao mudar de janela
+│       ├── cli/               # Ponte da CLI `devsuite` (regra 14): handlers sobre o estado vivo de cada app
+│       │   ├── bridge.js      # "cli-call" → handler → cli_reply/cli_event; registerCli(view, tabela), cancelamento
+│       │   ├── cliUtils.js    # Sem DOM: CliError, pick (id/nome), splitPair, sqlReadOnly, parseDue, parseAuth, sinceMs
+│       │   ├── notesCli.js    # notes.*: cofres, list/search (todos os cofres), get/create/update/move/delete, links, export/import
+│       │   ├── tasksCli.js    # tasks.*: boards, list (filtros), add/update/move/done/archive/delete
+│       │   ├── httpCli.js     # http.*: coleções, requisições (CRUD + scripts), send/run/curl, ambientes, Postman
+│       │   ├── dbCli.js       # db.*: conexões, introspecção, describe/ddl/script, query (SQL/mongosh, trava de escrita), plan/top-queries/sessions/waits/indexes
+│       │   └── rabbitCli.js   # rabbit.*: overview/filas/..., peek/watch, publish/move/purge (--write/--confirm), gravações, log
+│       │   └── redisCli.js    # redis.*: conns, info, keys/get/ttl, set/del/exec/publish (--write/--yes/--confirm), slowlog, clients, memory, monitor/subscribe
 │       ├── utils/
 │       │   ├── date.js        # Utilitários de data e formatação de tempo
 │       │   ├── dom.js         # Helper `el()` para montar DOM (compartilhado pelos componentes)
@@ -73,6 +90,7 @@ todo-rs/
 │       │   ├── graphLayout.js # Notas: simulação de forças do grafo (Barnes-Hut, para sozinha; sem DOM)
 │       │   ├── folderTree.js  # Árvore de pastas com subpastas (Notas e HTTP): filhos, caminho, achatar, mover, garantir caminho
 │       │   ├── mdImport.js    # Importar pasta de Markdown: caminhos relativos, imagens do vault, links [[pasta/Nota#seção]]
+│       │   ├── textDiff.js    # Git das Notas: diff por linha (Myers) e palavra, blocos insert/delete/modify, dobras, reverter trecho, merge3 + marcadores (sem DOM)
 │       │   ├── textFind.js    # Busca sem maiúsculas/acentos com posições preservadas (Ctrl+F na nota)
 │       │   ├── mdDoc.js       # .md de fora das Notas: texto do arquivo <-> HTML do editor (front-matter, EOL e BOM intactos; imagens relativas)
 │       │   ├── vaultNote.js   # Modo cofre: HTML da nota <-> arquivo .md (título = nome do arquivo, imagens relativas), safeName, folderDir
@@ -80,16 +98,21 @@ todo-rs/
 │       │   ├── httpConvert.js # HTTP: import cURL, snippets de código, import/export Postman v2.1
 │       │   ├── httpScripts.js # HTTP: sandbox dos scripts pre-request/tests (API `pm` + `pm.expect`)
 │       │   ├── jsonRepair.js  # JSON: diagnóstico heurístico + pipeline de reparo, parser tolerante e serializador
-│       │   ├── dbModel.js     # Banco: databases.json (conexões sem segredo, consoles, abas), connection string ADO/JDBC
+│       │   ├── dbModel.js     # Banco: databases.json (conexões sem segredo, consoles, consultas salvas, abas), connection string ADO/JDBC
+│       │   ├── sqlParams.js   # Parâmetros das consultas (:nome / {{nome}}): achar e substituir por literais do dialeto/mongosh (sem DOM)
 │       │   ├── sqlDialect.js  # Banco: dialeto SQL (quoting, literais, paginação OFFSET/FETCH); marcadores DEFAULT/GENERATED
 │       │   ├── sqlSplit.js    # Banco: divide scripts em lotes (GO) e comandos; comando sob o cursor
 │       │   ├── sqlGen.js      # Banco: UPDATE/INSERT/DELETE das alterações pendentes do grid (pela PK original)
 │       │   ├── sqlDdl.js      # Banco: modelo editável da tabela + DDL do SQL Server (diff ALTER/CREATE, renomear, excluir)
+│       │   ├── sqlPlan.js     # Banco: SHOWPLAN XML (tokenizer próprio) → comandos/operadores com custos, avisos, índices faltantes, diagnósticos, layout do diagrama (sem DOM)
+│       │   ├── sqlStats.js    # Banco: mensagens SET STATISTICS IO/TIME (3615/3612/3613) → leituras por tabela e tempos (pelo número, não pelo idioma)
+│       │   ├── sqlPerf.js     # Banco: SQL das DMVs/Query Store (top consultas, sessões, esperas, índices, estatísticas), cadeia de bloqueio, categorias de espera (sem DOM)
 │       │   ├── mongoShell.js  # MongoDB: parser da sintaxe do mongosh → operação JSON (Extended JSON); divisão do script
 │       │   ├── mongoValue.js  # MongoDB: Extended JSON ↔ células, formatação mongosh, updateOne/insertOne/deleteOne do grid
 │       │   ├── gridModel.js   # DataGrid: linhas, visão filtrada/ordenada, pendências, agregados (sem DOM)
 │       │   ├── gridExport.js  # DataGrid: TSV/CSV/JSON/Markdown/SQL INSERT e leitura de TSV colado (Excel)
 │       │   └── rabbitModel.js # RabbitMQ: conexões/ui/settings, caminhos da API, formatação, x-death, filtros, {{n}}/{{uuid}}
+│       │   └── redisModel.js  # Redis: redis.json, valores RESP {t,v} ↔ texto/JSON, linha do redis-cli, árvore de chaves, INFO/CLIENT LIST/SLOWLOG/MONITOR, comandos perigosos, URL
 │       └── components/
 │           ├── tasks.js       # Tarefas: board kanban (boards, colunas, cards, drag & drop, filtros, arquivados, barra de foco, atalhos)
 │           ├── taskDetail.js  # Tarefas: detalhe do card (status, prazo, etiquetas, foco/Pomodoro, anotação)
@@ -122,6 +145,8 @@ todo-rs/
 │           ├── dbShared.js    # Banco: rodapé com agregados, "copiar como", exportação, controles Tx
 │           ├── dbDialogs.js   # Banco: diálogo de conexão, revisão do SQL antes de gravar
 │           ├── dbSchema.js    # Banco: "Modificar tabela"/"Nova tabela" e ações rápidas de DDL (prévia do SQL + execução)
+│           ├── dbPlan.js      # Banco: visualizador de plano (diagrama com zoom, árvore, diagnósticos, propriedades, XML, .sqlplan) + aba de plano
+│           ├── dbPerf.js      # Banco: aba Desempenho (Top consultas, Query Store, Sessões e bloqueios, Esperas, Índices e estatísticas)
 │           ├── dataGrid.js    # DataGrid genérico virtualizado (2 eixos): seleção estilo Excel, edição, colar, busca
 │           ├── dataGridFilter.js # DataGrid: popup de filtro local (valores distintos + contagem)
 │           ├── dataGridEditor.js # DataGrid: editor sobre a célula e editor de valor (texto longo/JSON/XML)
@@ -132,17 +157,29 @@ todo-rs/
 │           ├── rabbitMessage.js # RabbitMQ: detalhe de uma mensagem (propriedades, headers, x-death, corpo JSON/XML/hex)
 │           ├── rabbitLog.js   # RabbitMQ: Gravações (capturas + mensagens do rabbit.db, filtros, ao vivo, republicar, exportar)
 │           ├── rabbitDialogs.js # RabbitMQ: conexão, publicar, mover/copiar, nova fila/exchange/ligação, gravar, preferências
+│           ├── redis.js       # Redis: orquestrador (conexões, árvore de chaves virtualizada por SCAN, abas, bandeja, ao vivo)
+│           ├── redisKey.js    # Redis: aba da chave (TTL, renomear, excluir, DUMP) + editores por tipo e o editor de valor (texto/JSON/hex/Base64)
+│           ├── redisConsole.js # Redis: console estilo redis-cli (histórico, Tab, dica do COMMAND DOCS, sessão própria)
+│           ├── redisViews.js  # Redis: visão geral, configuração, slowlog/latência, clientes, Monitor, Pub/Sub, análise de memória, Cluster
+│           ├── redisDialogs.js # Redis: conexão (modos, TLS, SSH), nova chave, TTL, formulários, confirmação de ambiente sensível
 │           ├── windowMode.js  # Alterna modo bandeja <-> modo desktop (evento "windowmodechange"); janela desatachada = sempre desktop
 │           ├── detach.js      # Apps desatachados: abrir em janela própria, ↗ no seletor, reatachar, gravar antes de sair
 │           ├── pomodoro.js    # Motor do Pomodoro dos cards (por timestamp; eventos pomodorotick/pomodorochange; sem interface)
 │           ├── settings.js    # Gerenciamento de configurações (autostart, minimizado)
 │           ├── mdFile.js      # Janela de um .md de fora das Notas (editor, grava no arquivo, conflito) e a prévia somente leitura do Espaço
+│           ├── noteGit.js     # Notas (cofre): painel Git na metade de baixo da barra lateral (Alterações com caixas + commit, Histórico, Fetch/Pull/Push)
+│           ├── diffView.js    # Notas (cofre): diff lado a lado/unificado estilo JetBrains (faixas, palavras, ≫ reverter trecho) e merge de 3 vias
+│           ├── gitDialogs.js  # Notas (cofre): diálogos do git (remoto, identidade, cofre novo), overlay próprio no <body>
 │           ├── notesStorage.js # Configurações: notas no banco local ou num cofre (pasta de Markdown); lista de cofres; copiar notas ao ativar
 │           └── windowControls.js # Controles da janela frameless e menu dropdown
 └── src-tauri/                 # Backend Rust (Tauri)
     ├── Cargo.toml             # Dependências Rust (tauri, serde, etc.)
     ├── tauri.conf.json        # Configuração do aplicativo (tamanho, frameless, tray, associação de .md, resources, hooks do NSIS)
-    ├── installer-hooks.nsh    # Hooks do NSIS: ProgID DevSuite.Markdown com ícone de arquivo .md e "Abrir com → Dev Suite - Notas" (ícone do Notas)
+    ├── tauri.release.conf.json # Só no build de release (`--config`): externalBin da CLI (o tauri-build exige o binário, então fica fora do dev)
+    ├── installer-hooks.nsh    # Hooks do NSIS: ProgID DevSuite.Markdown com ícone de arquivo .md e "Abrir com → Dev Suite - Notas" (ícone do Notas); pasta da CLI no PATH do usuário
+    ├── cli/                   # Crate `devsuite-cli` (workspace; binário de console `devsuite`, sem Tauri)
+    │   ├── commands.json      # Catálogo dos comandos (grupos, args, opções, exemplos): parser, --help, `devsuite schema`
+    │   └── src/               # main.rs (fluxo, saída, skills install), spec.rs (parser/ajuda), conn.rs (pipe/socket, inicia o app), out.rs (tabelas, CSV)
     ├── icons/files/markdown.* # Ícone dos arquivos .md (folha + marca M↓; .ico gerado pelo _gen_icons.ps1, instalado como resource)
     └── src/
         ├── main.rs            # Comandos Rust IPC e lógica de persistência JSON no disco
@@ -152,8 +189,10 @@ todo-rs/
         ├── notes_db.rs        # Notas e pastas em SQLite (notes.db, rusqlite bundled): FTS5 trigram, migração do JSON; despacha os comandos para SQLite ou cofre
         ├── md_files.rs        # .md de fora das Notas: janela `md-<hash>` por arquivo, ler/gravar com conflito por mtime, imagens em attachments/ ao lado, janela `md-preview`
         ├── quicklook.rs       # Windows: Espaço no Explorer/Área de Trabalho (hook WH_KEYBOARD_LL + IShellWindows/IFolderView2) abre a prévia do .md
+        ├── notes_git.rs       # Git do cofre: executável `git` do sistema (sem console), status/diff/commit/reverter/log, remoto, pull com merge e conflitos, cofre novo
         ├── notes_vault.rs     # Modo cofre: pasta de .md como fonte da verdade + índice local (vaults/<hash>.db), conflitos, lixeira .trash
         ├── persist.rs         # Fila de gravação em thread própria (atômica, sem travar a UI)
+        ├── cli/               # Servidor da CLI: named pipe/socket + token (cli.json), roteia "<app>.<cmd>" para a janela dona (mod.rs); cofres não ativos (vaults.rs)
         ├── app_windows.rs     # Janelas desatachadas (app-<id>): abrir/fechar, windows.json, AppUserModelID + relançamento, menu da bandeja
         ├── rabbit/            # Aba RabbitMQ
         │   ├── mod.rs         # Comandos Tauri, senhas (cofre + cache), gravações ativas (tracing liga/desliga)
@@ -161,7 +200,15 @@ todo-rs/
         │   ├── amqp.rs        # AMQP (amqprs): captura tap/firehose/exchange, mover/copiar em transação, FieldTable<->JSON
         │   ├── store.rs       # rabbit.db (SQLite): conexões, meta (ui/settings), captures, messages + FTS5 trigram
         │   └── it_tests.rs    # Testes de integração (precisam de TODORS_RABBIT_TEST)
-        ├── (vendor/tiberius)  # tiberius 0.13 com patch "TodoRS patch" (contagem por comando); ver [patch.crates-io]
+        ├── redis_app/         # App Redis (não se chama `redis` para não colidir com o crate)
+        │   ├── mod.rs         # Comandos Tauri, redis.json, segredos (cofre + cache), exec/pipeline/scan, ao vivo
+        │   ├── conn.rs        # RedisConn → Handle (standalone/Cluster/Sentinel, TLS), sessões por (sessão, banco), COMMAND INFO
+        │   ├── value.rs       # RESP2/RESP3 ↔ JSON { t, v } (binário em Base64), argumentos texto | { b64 }
+        │   ├── ssh.rs         # Túnel SSH (russh): encaminhamento local por nó + resolvedor de nomes do driver; known_hosts
+        │   ├── live.rs        # MONITOR e Pub/Sub em conexões dedicadas (eventos em lotes pelo Channel)
+        │   ├── analyze.rs     # Análise de memória (SCAN + TYPE/MEMORY USAGE/PTTL): tipo, prefixo, TTL, maiores chaves
+        │   └── it_tests.rs    # Integração (TODORS_REDIS_TEST, _CLUSTER_TEST, _SENTINEL_TEST, _SSH_TEST)
+        ├── (vendor/tiberius)  # tiberius 0.13 com patch "TodoRS patch" (contagem por comando e mensagens INFO); ver [patch.crates-io]
         └── db/                # Cliente de banco de dados (aba Banco)
             ├── mod.rs         # Comandos Tauri, sessões (session_id) e cancelamento
             ├── driver.rs      # Traits Driver/Session + tipos neutros (ColumnMeta, ExecEvent, ObjectNode, TableInfo)
@@ -222,6 +269,29 @@ O backend Rust (`src-tauri/src/main.rs`) expõe os seguintes comandos via Tauri 
 | `md_file_save_image` / `md_file_import_image` | bytes + headers `x-token`/`x-ext` / `{ token, path }` | `Result<String>` | Imagem em `attachments/` ao lado do arquivo; devolve o caminho relativo |
 | `md_open` / `md_reveal` / `md_window_close` | `{ path }` / `{ path }` / - | `Result` | Abrir a janela do arquivo, mostrar no Explorer, fechar depois de gravar |
 | `md_preview_ready` / `md_preview_hide` | - | `()` | Prévia: mostrar (centralizada no monitor do cursor) / esconder |
+| `cli_ready` / `cli_reply` / `cli_event` | - / `{ callId, result?, error? }` / `{ callId, event }` | `()` / `()` / `bool` | Ponte da CLI (regra 14): handlers prontos nesta janela; resposta; evento intermediário (`false` = cliente saiu) |
+| `cli_store_read` | `{ store: { kind: sqlite\|vault, path? }, op: { op: list\|search\|get, ... } }` | `Value` | CLI: lê um armazenamento de notas que não é o ativo (banco local ou outro cofre) |
+| `cli_vault_create` | `{ vault, dir, title, markdown }` | `Result<String>` | CLI: cria um .md novo noutro cofre (nunca sobrescreve) |
+| `cli_info` / `cli_setup` | - / `{ action: path\|skills }` | `{ exe, on_path }` / `Result<String>` | Configurações → CLI: onde está; pôr no PATH (Linux: link em ~/.local/bin); instalar as skills |
+
+### Git do cofre (`src-tauri/src/notes_git.rs`)
+
+Sempre sobre o cofre ativo (`notes_db::active_vault_root`); `path` = relativo à raiz do repositório (o cofre pode ser subpasta dele), `rel` = relativo ao cofre. Um comando por repositório de cada vez.
+
+| Comando IPC | Parâmetros | Retorno | Descrição |
+| :--- | :--- | :--- | :--- |
+| `git_info` | - | `{ available, version, repo, root, top, prefix, remote_url, user_name, user_email }` | Git instalado? Cofre é repositório? |
+| `git_status` | - | `{ files: [{ path, orig_path, rel, status }], branch, head, upstream, ahead, behind, merging }` | `status`: modified, added, deleted, renamed, untracked, conflicted |
+| `git_init` / `notes_vault_create` | - / `{ parent, name }` | `()` / `{ path, git, committed, git_error }` | Ativar no cofre aberto (sem commit) / criar pasta nova com repositório + commit inicial |
+| `git_file_pair` | `{ path, origPath?, rev? }` | `{ left, right, left_label, right_label, binary, editable, mtime }` | HEAD x cópia de trabalho, ou `rev^` x `rev` (null = não existe) |
+| `git_write_file` | `{ path, text, expectedMtime }` | `mtime` | Grava o arquivo com um trecho revertido (recusa se mudou no disco) |
+| `git_commit` | `{ paths, message, amend }` | hash curto | Só os caminhos marcados (`--only`); durante merge commita o merge |
+| `git_rollback` / `git_ignore` | `{ files }` / `{ path }` | `()` | Volta ao HEAD (novos vão para `.trash/`) / linha no .gitignore do cofre |
+| `git_log` / `git_commit_files` | `{ path?, skip, limit }` / `{ hash }` | commits / arquivos | Histórico do cofre (ou de um arquivo, `--follow`) |
+| `git_remote_set` / `git_remote_test` | `{ url? }` / `{ url, opId }` | `()` / nº de branches | `origin` opcional |
+| `git_fetch` / `git_pull` / `git_push` / `git_cancel` | `{ opId }` | | Pull = merge (`--no-rebase`, `--allow-unrelated-histories`); conflito = `{ conflicts: true }`, não erro |
+| `git_conflict` / `git_resolve` / `git_merge_abort` | `{ path }` / `{ path, text? }` / - | | Base/minha/deles (`:1:/:2:/:3:`); gravar + `add` |
+| `git_set_identity` | `{ name, email, global }` | `()` | `user.name`/`user.email` |
 
 **Modo cofre** (`AppSettings.notes_storage = "vault"`, `vault_path`): os comandos `notes_*` são os mesmos, despachados em `notes_db.rs` (`Backend::Sqlite | Backend::Vault`). Diferenças: `notes_get` devolve `{ markdown, rel, mtime }` em vez do HTML; `notes_save` recebe também `markdown` (gerado no JS) e `disk_mtime` e devolve `{ disk_mtime, rel, conflict }`; `NoteMeta` traz `front_matter` (cru), `disk_mtime` e `rel`.
 
@@ -244,10 +314,28 @@ Todos os comandos que tocam a rede são `async`. Os que rodam SQL recebem `targe
 | `db_table_info` / `db_ddl` | `{ target, schema, name }` / `{ target, path }` | `Result` | Colunas com PK/identity/FK; DDL do objeto |
 | `db_table_schema` | `{ target, schema, name }` | `Result<TableSchema>` | Estrutura editável: colunas (default + nome da constraint), índices/chaves, FKs, checks |
 | `db_database_script` | `{ target, options: DbScriptOptions }` | `Result<{ sql, objects, warnings }>` | Script do banco inteiro na ordem de criação (só SQL Server); `options` = tipos de objeto, `schemas` (vazio = todos), `if_not_exists` |
-| `db_execute` | `{ target, queryId, sql, maxRows?, onEvent: Channel }` | `Result<ExecSummary>` | Result sets em lotes pelo Channel (`result_start`/`rows`/`docs`/`result_end`, e `done` por último: `dbApi.execute` só resolve depois dele, porque a resposta do invoke pode chegar antes das mensagens grandes do Channel); `sql` = SQL ou, no MongoDB, a operação JSON |
+| `db_execute` | `{ target, queryId, sql, maxRows?, options?: { plan: estimated\|actual, stats_io, stats_time }, onEvent: Channel }` | `Result<ExecSummary>` | Result sets em lotes pelo Channel (`result_start`/`rows`/`docs`/`result_end`, `message` = PRINT/STATISTICS IO/TIME `{ number, class, line, procedure, text }`, `plan` = `{ index, xml }` fora do grid, e `done` por último: `dbApi.execute` só resolve depois dele, porque a resposta do invoke pode chegar antes das mensagens grandes do Channel); `sql` = SQL ou, no MongoDB, a operação JSON |
 | `db_cancel` | `{ queryId }` | `()` | Cancela fechando o socket (o servidor aborta e desfaz a transação) |
 | `db_tx` | `{ target, action: begin\|commit\|rollback }` | `Result<u32>` | Devolve @@TRANCOUNT |
 | `db_apply` | `{ target, statements, atomic }` | `Result<Vec<u64>>` | Alterações do grid (tudo ou nada quando `atomic`) |
+
+### Redis (`src-tauri/src/redis_app/`)
+
+Dados em `redis.json` (sem segredos). Segredos no cofre (`db:redis:<connId>:<password|sentinel_password|ssh_password|ssh_passphrase>`). `conn` = `RedisConn` (`connConfig()` no JS). Valores voltam como `{ t, v }` (`str`, `bin` em Base64, `int`, `nil`, `status`, `err`, `arr`, `map`, `set`, `dbl`, `bool`, `big`); argumentos vão como texto ou `{ b64 }`. Erro de resposta do servidor (WRONGTYPE…) é `{ t: "err" }`; só falha de conexão rejeita.
+
+| Comando IPC | Parâmetros | Retorno | Descrição |
+| :--- | :--- | :--- | :--- |
+| `load_redis_data` / `save_redis_data` | `{ data }` | `Value` / `Result` | Documento `redis.json` (formato em `redisModel.js`) |
+| `redis_set_secret` / `redis_has_secrets` / `redis_forget_secrets` | `{ connId, kind?, value? }` | `Result` / `{ kind: bool }` | Segredos no cofre (o cache é limpo ao gravar) |
+| `redis_test` / `redis_connect` | `{ conn, secrets? }` | `ServerInfo` | `{ version, mode, role, os, databases, address, modules }`; test usa os segredos digitados |
+| `redis_disconnect` / `redis_close_session` | `{ connId, session? }` | `()` | Fecha tudo (e para ao vivo) / uma sessão (cancelar console) |
+| `redis_exec` | `{ conn, db, session, args, node? }` | `{ t, v }` | Comando cru; `node` = `host:porta` no Cluster; recusa SUBSCRIBE/MONITOR/SELECT/QUIT…; conexão somente leitura recusa a flag `write` |
+| `redis_pipeline` | `{ conn, db, session, cmds, node? }` | `[{ t, v }]` | Vários comandos (no Cluster, um por vez em paralelo) |
+| `redis_scan` | `{ conn, db, spec: { cursor, pattern, type, count, limit } }` | `{ cursor \| null, keys: [{ k, type }] }` | SCAN incremental (todos os masters no Cluster) + TYPE |
+| `redis_nodes` | `{ conn }` | `[NodeInfo]` | CLUSTER NODES (ou o próprio servidor) |
+| `redis_live_start` | `{ conn, spec: { kind: monitor\|subscribe, channels, patterns, node, db }, onEvent }` | `id` | Eventos `monitor { lines }` / `messages { items }` / `stopped { error }` |
+| `redis_analyze_start` | `{ conn, spec: { db, pattern, count, limit, separator, depth, top, pause_ms }, onEvent }` | `id` | Parcial a cada ~0,5 s; o último tem `done: true` |
+| `redis_live_stop` | `{ id }` | `bool` | Para Monitor/assinatura/análise |
 
 ### RabbitMQ (`src-tauri/src/rabbit/`)
 
@@ -274,6 +362,8 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 - **AppSettings**: `{ autostart: bool, start_minimized: bool, theme: "system" | "light" | "dark", zettelkasten: bool, notes_storage: "sqlite" | "vault", vault_path: String, vaults: [String], md_quicklook: bool (padrão true; só Windows) }`
 - **HttpRequest** (IPC): `{ id, method, url, headers: [{key,value}], body: {kind: none|text|multipart|file}, timeout_ms, follow_redirects, verify_ssl, use_cookies }`
 - **http.json**: `{ version, collections: [{id,name,description,auth,variables,scripts,folders: [{id,name,parent_id,collapsed}]}], requests: [...], environments, active_env, globals, history, settings }`
+- **databases.json → queries** (consultas salvas): `[{ id, conn_id, database ("" = padrão do login), folder: "a/b", name, description, sql, params: { nome: { type, last } }, created_at, updated_at }]`; console ligado a uma: `consoles[].saved_id` (+ `params` com os últimos valores)
+- **redis.json**: `{ version, connections: [{ id, name, color, mode: standalone|cluster|sentinel, host, port, nodes, master_name, username, sentinel_username, tls, tls_insecure, ca_path, timeout_s, read_only, protected, db, separator, ssh: null | { host, port, user, auth: password|key, key_path } }], history: { connId: [linhas do console] }, ui: { conn_id, dbs, tabs: [{ id, type: key|console|overview|…, conn_id, db, key? }], active_tab, side_w, side_open, refresh_s, view, scan_count } }`
 
 ---
 
@@ -318,6 +408,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - **Links entre notas** (sempre ativos): `[[Título]]` / `[[Título|texto]]` viram `<a class="nt-link" contenteditable="false" data-note="<id>">` (chip atômico). O link guarda o **id** (renomear não quebra; o texto é atualizado ao abrir, `hydrateLinks`); sem nota com esse título fica `data-target="Título"` (pendente, tracejado; clicar cria a nota). Digitar `[[` abre o menu de notas (títulos e apelidos, "Criar …"); `]]` fecha à mão; também no menu "/" e na barra da seleção. Clique abre a nota (vai para a pasta dela se não estiver na lista), hover mostra a prévia, Alt+← / Alt+→ navegam. Rodapé "Mencionada em"/"Links" sai dos metadados em memória (`backlinkMap`), sem carregar HTML. Os dados do editor vêm de `notes.js` via `setLinkProvider`.
    - **Modo Zettelkasten** (`AppSettings.zettelkasten`, Configurações ou menu "…"): painel de propriedades acima do texto (fora do HTML; coluna `props`): id zettel `AAAAMMDDHHmm` (nota nova, ou a antiga na 1ª edição), tags, apelidos (também resolvem `[[ ]]`), tipo (fleeting/literature/permanent/hub), status, fonte e campos livres. Busca aceita `tag:x` / `#x` (hierárquica: `a` casa `a/b`), `type:`, `status:`, `id:` e `[[Nota]]` (quem aponta para ela) — filtros na memória, o resto do texto vai para o FTS. Grafo (entrada "Grafo" nas pastas, botão "Grafo local", Ctrl+Shift+G): notas + tags, global/local (1–3 níveis), busca por nó, órfãs/pendentes, cores por tipo. Rótulos sem sobreposição: entram por prioridade (sob o mouse, nota atual, busca; depois notas mais ligadas, tags por último) e o que encostaria num já desenhado fica de fora; os "ambientes" só aparecem a partir do zoom configurado (padrão 0.8×, com fade). Painel de ajustes (ícone de sliders): limiar dos títulos e forças (repulsão, distância e força das ligações, gravidade; `DEFAULT_FORCES` em `graphLayout.js`, `sim.setForces` reorganiza ao vivo), salvos no `nt-graph-opts` do localStorage. Foco do hover com fade de opacidade (180/260 ms), também com "reduzir animações". O layout tem colisão entre nós. A simulação (`graphLayout.js`) roda em passos com orçamento de ~7 ms por quadro e **para sozinha**: nada de `requestAnimationFrame` com o grafo parado ou oculto. Export Markdown escreve o front-matter YAML (sempre com `created: AAAA-MM-DD`) e `[[Título]]`.
    - **Cofre (pasta de Markdown, como o Obsidian)**: Configurações → "Notas: onde guardar" (banco local | cofre) + pasta; opção de copiar as notas locais ao ativar (o notes.db fica intacto). Troca rápida na barra lateral: o rótulo "No Meu PC"/nome do cofre abre um menu com o banco local, os cofres já usados (`AppSettings.vaults`), "Abrir outro cofre…" e "Remover da lista" (a pasta não é tocada); `switchNotesStorage` dispara `notesstoragechange`. Pode ser uma pasta de rede compartilhada. Os arquivos são a verdade: `<cofre>/a/b/Título.md` = nota "Título" na pasta `a/b`; diretórios = pastas; lixeira = `.trash/` (pastas ocultas, `node_modules` e `attachments/` na raiz não viram pastas). O título é o nome do arquivo (`safeName`/`safe_name`, iguais no JS e no Rust): a 1ª linha só fica no corpo como `# Título` se o nome não consegue representá-la; mudar o título renomeia o arquivo. Front-matter via `propsToYaml` (sempre `created:`), links `[[Título]]`, imagens coladas em `attachments/<hash>` e todas por caminho relativo à nota; no app as imagens do cofre usam `noteimg://localhost/v/<caminho>` (`vault_file` rejeita `..`/absolutos/fora da raiz). Índice local em `<app_data>/vaults/<hash>.db` (só cache: ids estáveis, mtime, FTS); `scan` relê só o que mudou e renomeação externa (mesmo conteúdo) mantém o id. Fixar fica só no índice. Sincroniza ao focar a janela, ao entrar na aba e a cada 30 s (polling por mtime; watchers não são confiáveis em SMB) + "Atualizar do Cofre". **Conflito**: se o arquivo mudou no disco desde a versão que o app leu (`disk_mtime`), nada é sobrescrito — a versão do app vai para `Título (conflito <máquina> <data>).md`. Abrir uma nota e só resolver links não regrava o arquivo (`vaultKey`). Gravação atômica (temporário oculto + rename).
+   - **Controle de versão (git) do cofre** (`notes_git.rs`, `noteGit.js`, `diffView.js`, `textDiff.js`): usa o `git` do sistema (credenciais do usuário: Git Credential Manager/SSH; `GIT_TERMINAL_PROMPT=0`, SSH em `BatchMode` se não houver `core.sshCommand`); sem git, o painel avisa e o cofre segue igual. "Criar novo cofre…" (menu do cofre na barra lateral e Configurações) cria a pasta já com `git init -b main`, `core.autocrlf=false`, `.gitignore` (`.trash/`, temporários) e commit inicial; cofre existente sem repositório oferece "Ativar controle de versão" (sem commit). No desktop, a barra lateral é dividida (`--nt-vcs-ratio`, padrão 50%, `nt-vcs-split` no localStorage): pastas em cima, painel Git embaixo sob a seção "Controle de versão" (contador + branch), recolhida por padrão como no VS Code (`nt-vcs-collapsed` no localStorage; recolhida = só o cabeçalho, sem divisor) com abas **Alterações** (árvore por pasta com caixas; arquivos novos entram marcados; clique = diff, duplo clique = abrir a nota; menu: reverter, histórico do arquivo, ignorar; mensagem + "Corrigir último" + Commit / Commit e Push, Ctrl+Enter) e **Histórico** (commits do cofre ou de um arquivo; clique mostra os arquivos e o diff `pai ↔ commit`). Commits são só manuais. Remoto `origin` opcional pelo ícone de nuvem; Fetch/Pull/Push canceláveis, ↑N ↓M. O status atualiza após cada gravação no cofre (evento `notesvaultwrite` do `noteStore.js`), ao focar e a cada 30 s. Operações que mexem nos arquivos (pull, reverter, ≫, resolver) gravam as pendências antes e chamam `syncVault` depois. **Diff** (`#nt-diff`, `data-view="diff"`, ocupa lista + editor; Esc fecha): lado a lado com faixas curvas, azul/verde/cinza, palavras alteradas, ≫ reverte o trecho (só cópia de trabalho), F7/Shift+F7, unificado, ignorar espaços, trechos iguais recolhidos. Conflito de merge: Minha | Resultado (editável, marcadores `<<<<<<< Minha`) | Deles, por conflito ou arquivo inteiro, "Marcar como resolvido" = `git_resolve`; o commit conclui o merge.
    - **Modo bandeja**: navegação em pilha Pastas → Lista → Nota dentro da janela 370x530 (o grafo é mais um painel da pilha). **Modo desktop**: botão de expandir chama `set_desktop_mode(true)`; layout de 3 colunas com barra unificada e botões de janela no estilo do SO (fechar = volta à bandeja e oculta). Ao entrar na aba Notas no modo bandeja, sempre abre a lista "Todas as Notas".
 
 4. **HTTP (cópia do Postman, visual das Notas)**:
@@ -352,7 +443,10 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - Cancelar fecha a conexão da aba (o Attention do tiberius deixa a conexão dessincronizada); a sessão é reaberta no próximo comando.
    - **Estrutura (DDL)**: menus do Explorer (tabela, schema, pasta, grupos e itens) abrem "Modificar tabela" (Ctrl+F6) / "Nova tabela" ou ações rápidas (renomear, excluir, TRUNCATE, coluna/índice/FK). `sqlDdl.js` compara o modelo com o original e gera os comandos na ordem certa (remove FKs/checks/índices/defaults dependentes antes de excluir ou alterar coluna e recria depois; `sp_rename` para renomear; nome da tabela por último). Tudo roda numa transação na sessão `meta:` com `SET LOCK_TIMEOUT` e o SQL é mostrado antes. Bloqueado em conexão somente leitura; só SQL Server.
    - **DDL do banco inteiro** ("Gerar DDL do banco/schema…" no Explorer → diálogo de opções → aba de DDL com "Salvar .sql…" e "Abrir no console de…" outra conexão): `mssql_meta::database_script` carrega tudo em lote (`load_tables(Scope)`, uma consulta por categoria, sem N+1) e monta lotes separados por `GO`: schemas → tipos (alias e de tabela) → sequences → sinônimos → tabelas e módulos num grafo só (`topo_order`: FKs + `sys.sql_expression_dependencies`, ciclos viram um bloco via Tarjan; prioridade tabelas < views/funções < procedures, então uma função usada em CHECK/coluna calculada sai logo antes da tabela) → triggers. Cada tabela leva seus índices e as FKs cujo alvo já existe; FK circular sai depois da segunda tabela do ciclo. `if_not_exists` protege cada objeto (`IF OBJECT_ID … IS NULL`; módulos via `EXEC(N'…')`, porque `CREATE OR ALTER` falha em função SCHEMABINDING referenciada). Fora: dados, usuários, permissões, filegroups/partições, propriedades estendidas, índices XML/espaciais (avisados no cabeçalho). O DDL de uma tabela (`table_ddl`) usa o mesmo render (`create_table_sql`/`index_sqls`/`fk_sql`).
+   - **Desempenho (só SQL Server/Azure SQL)**: `db_execute` com `options` liga os `SET` num lote próprio antes e os desliga depois (sempre; se não der, a sessão é marcada quebrada e reaberta — com SHOWPLAN ligado nada mais executaria). Estimado = `SET SHOWPLAN_XML` (nada executa, sem trava de escrita); real = `STATISTICS XML` + IO/TIME. O result set com a coluna `Microsoft SQL Server 2005 XML Showplan` vira o evento `plan`; mensagens INFO vêm do patch `QueryItem::Info` do tiberius. Sessões `console:`/`tab:`/`cli:q:`/`perf:` rodam sem `command_timeout` (o Cancelar fecha o socket); `meta:` mantém 30 s. Console: "Explicar" (Ctrl+L), "Explicar e executar" (Ctrl+Shift+L) e o botão IO/TIME (`consoles[].stats`) — abas "Plano" (`createPlanView`) e "Estatísticas" no resultado; PRINT aparece na Saída. Aba `plan` (XML só em memória; só a aberta de um `.sqlplan` volta ao recarregar) e aba `perf` por conexão + banco (`options.section`, sessão `perf:<conn>:<db>`), abertas pelos menus do Explorer (conexão, banco → "Desempenho", tabela → índices, procedure → estatísticas). O SQL das DMVs fica em `sqlPerf.js` (usado também pela CLI). Escritas da aba (KILL, forçar/desforçar plano, ativar Query Store, criar índice, UPDATE STATISTICS) mostram o SQL e confirmam; recusadas em conexão somente leitura. Diagnósticos (`planInsights`): operador caro, estimativa errada (≥10×), Key Lookup repetido, scan com predicado residual, spill, conversão implícita, sem predicado de junção, memory grant, parameter sniffing, índices faltantes.
    - Conexões na ordem de `connections` (databases.json): arrastar no Explorer ou "Mover para cima/baixo" no menu da conexão.
+   - **Consultas salvas** (catálogo por conexão + banco, `databases.json → queries`): nó "consultas salvas" antes dos objetos de cada banco no Explorer (montado do JSON a cada desenho, sem rede; continua visível se a listagem do servidor falhar), com subpastas pelo `folder` ("a/b"). Duplo clique abre num console ligado à consulta (`saved_id`, título com "*" quando difere); menu: Executar, Abrir no console, Editar detalhes (nome/pasta/descrição/conexão/banco), Duplicar, Copiar, Excluir (Desfazer); pastas: renomear/excluir; arrastar consulta para outra pasta/banco. No console, Ctrl+S salva (seleção ou script; ligado = atualiza) e Ctrl+Shift+S salva como nova; o log tem "Salvar como consulta…".
+   - **Parâmetros** (`sqlParams.js`): `:nome` (SQL, fora de strings/comentários/`[..]`; `::` e `:` no início da linha — SQLCMD — não contam) e `{{nome}}` (SQL e MongoDB, em qualquer lugar; dentro de string entra só o texto escapado). Antes de executar, `paramsDialog` pede os valores (tipo auto/texto/número/data/bool/NULL/cru, prévia do texto final) e lembra os últimos (`params[x].last` no console e na consulta). A trava de somente leitura é avaliada depois da substituição.
    - Modo bandeja mostra só a lista de conexões; o cliente completo é desktop-only.
 
 9. **RabbitMQ (monitor e depurador de filas)**:
@@ -372,7 +466,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - Uma instância só (`tauri-plugin-single-instance`, primeiro plugin do Builder): uma 2ª execução mostra a principal ou, com `--app=<id>`, abre a janela daquele app.
 
 12. **Apps desatachados (janelas próprias)**:
-   - Tarefas, Notas, HTTP, JSON, Banco e RabbitMQ podem sair da principal para uma janela `app-<id>` (botão ↗ na barra desktop de cada app ou clique direito no seletor/abas). Configurações fica sempre na principal. A janela carrega o mesmo `index.html` com `window.__DEVSUITE_APP__` (`initialization_script`) e o `main.js` só inicializa aquele app (`SOLO_APP`).
+   - Tarefas, Notas, HTTP, JSON, Banco, RabbitMQ e Redis podem sair da principal para uma janela `app-<id>` (botão ↗ na barra desktop de cada app ou clique direito no seletor/abas). Configurações fica sempre na principal. A janela carrega o mesmo `index.html` com `window.__DEVSUITE_APP__` (`initialization_script`) e o `main.js` só inicializa aquele app (`SOLO_APP`).
    - **Um app vive em uma janela por vez**: a principal não mostra nem grava um app solto (`state.detached`; `showMainView` foca a janela dele). Por isso `kanban.json`, `http.json`, `databases.json` etc. continuam com um único escritor. Antes de mover, `flushApp` grava as pendências e `app_window_open` esvazia a fila do `persist`; ao voltar (`app-attached`) a principal relê do disco (`reloadApp`). Cada app registra `flush`/`reload`/`blocker` em `appLifecycle.js` (Banco: consulta rodando bloqueia; Tarefas: sessão de Pomodoro bloqueia). O reload do Banco recria a interface sem `dispose()`: as sessões `tab:`/`console:`/`meta:` continuam no Rust (transação aberta preservada). Gravações do RabbitMQ reconectam por `rmq_capture_attach`.
    - X / Alt+F4 / botão "Devolver" na janela solta = reatachar (`app-close-requested` → grava → `app_window_close`; sem resposta em 3 s fecha mesmo assim). Novo app desatachável = registrar no `APPS` do `app_windows.rs`, em `DETACHABLE` (`windowContext.js`), um ícone em `src-tauri/icons/apps/<id>.svg` (+ `_gen_icons.ps1`) e `registerApp` no componente.
    - `settings.json`: cada janela grava o documento inteiro; `save_settings` emite `settings-changed` para todas e `initSettingsSync` (settings.js) atualiza a cópia local (tema, Zettelkasten, cofre). Com as Notas soltas, a troca de armazenamento nas Configurações fica bloqueada (é feita pela barra lateral das Notas).
@@ -387,6 +481,24 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
    - **Associação e ícones (instalador NSIS)**: `fileAssociations` cria o ProgID `DevSuite.Markdown` (o nome da associação), mas o template do Tauri sempre usa o ícone do executável; o `installer-hooks.nsh` (POSTINSTALL) troca o `DefaultIcon` para `icons/markdown.ico` e define o nome/ícone do "Abrir com" (`Application` + `FriendlyAppName` = "Dev Suite - Notas", `icons/notes.ico`), adiciona `OpenWithProgids` e remove o ProgID antigo `Markdown` se apontar para o `dev-suite.exe`. O MSI não usa os hooks. A janela do arquivo usa o ícone do Notas.
    - **Permissões**: toda janela nova precisa casar com `windows` em `src-tauri/capabilities/default.json` (`main`, `app-*`, `md-*`); sem isso `event.listen` falha e a janela fica sem eventos (foi o que impedia abrir o arquivo e a prévia).
 
+14. **CLI `devsuite` (scripts e agentes de IA)** (`src-tauri/cli`, `src-tauri/src/cli`, `src/js/cli`, `skills/`):
+   - **Ponte com o app** (nunca lê/grava os dados direto): o app abre o named pipe `devsuite-cli-<usuário>` (Windows, `reject_remote_clients`) ou `<app_data>/cli.sock` (0600) e grava `<app_data>/cli.json` (`endpoint`, `token` aleatório a cada início, `pid`, `exe`). Frames NDJSON: `{ hello, token }` → `{ id, method, params }` → `{ id, event }`* → `{ id, result }` | `{ id, error: { code, message } }`. Sem app rodando, a CLI inicia `dev-suite --background` (fica na bandeja; o single-instance ignora `--background`) e espera o handshake.
+   - `method = "<app>.<comando>"` (espaços/hífens → `_`). O Rust emite `cli-call` para a **janela dona** do app (`app-<id>` se desatachado, senão `main`), espera o `cli_ready` dela e reenvia quando a resposta é `moved` (app mudando de janela) ou a página recarregou (um novo `cli_ready` descarta as pendências daquela janela). Os handlers (`registerCli` em `main.js`, só para os apps desta janela) trabalham no estado vivo e gravam pelo mesmo caminho da interface (`notesHost`, `tasksHost`, `httpHost`, `dbHost`, `rabbitHost` exportados pelos componentes): um único escritor e a UI atualiza na hora. Eventos (`ctx.event`) saem em fila antes do `cli_reply` (o IPC do Tauri não garante ordem). Cliente que sai (Ctrl+C) = `cli-cancel` (consulta cancelada, `watch` para).
+   - **Comandos novos**: entrada em `src-tauri/cli/commands.json` (args/opções/exemplos; `input` = texto, `@arquivo` ou `-`; `path` = absoluto pelo cwd; `number`, `multi`, `flag`) + função na tabela exportada do `*Cli.js` do app. Nenhuma opção pode se chamar `json`, `text`, `pretty`, `timeout`, `no-start` ou `help` (globais). `node tests/cli.test.mjs` confere handlers, opções e os exemplos das skills.
+   - **Travas**: leitura livre. `--write` para SQL que não seja só leitura (`sqlReadOnly`: SELECT/WITH sem INTO, DECLARE/SET/PRINT; `EXEC` conta como escrita), escrita no MongoDB (unidade não `readOnly` do `mongoLanguage`), publish/consume/move/purge/delete/declare/close e API não-GET do RabbitMQ, firehose. `--yes` para excluir. `--confirm <nome>` em conexão RabbitMQ/Redis "ambiente sensível". Redis: `--write` para comandos com a flag `write` do COMMAND INFO (cache por conexão) e os perigosos; `del` exige `--yes`. `db run-saved` substitui os parâmetros (`--param nome[:tipo]=valor`, `--use-last`) e segue as travas do `db query`. `db plan` sem `--analyze` não executa nada (sem trava); `--analyze` executa e segue as travas do `db query`; `top-queries`/`sessions`/`waits`/`indexes` só leem DMVs (KILL, forçar plano e criar índice ficam na interface). Conexão de banco `read_only` recusa escrita. Códigos de saída: 0 ok, 1 erro, 2 uso/não encontrado/ambíguo, 3 app indisponível, 4 falta trava.
+   - **Banco**: sessões próprias `cli:q:<conn>:<banco>` / `cli:meta:<conn>:<banco>` (separadas das abas); transação deixada aberta por um script é desfeita (`rollback`) e avisada; `db disconnect` fecha as sessões da CLI.
+   - **Notas**: o armazenamento ativo é o estado vivo; `--vault`/`--all-vaults` leem os outros pelo `cli_store_read` (abre o índice `vaults/<hash>.db` ou o notes.db sem trocar o backend); `create --vault` grava um .md novo no outro cofre.
+   - **Instalação**: release com `--config src-tauri/tauri.release.conf.json` (externalBin `binaries/devsuite`, compilado por `build_cli.*`). NSIS: `devsuite.exe` em `$INSTDIR`, que o hook põe/tira do PATH do usuário (HKCU; o MSI não tem hooks) via PowerShell no valor cru do registro — nunca com `ReadRegStr`/`StrCpy`: strings do NSIS param em 1024 caracteres e um PATH maior voltava vazio, apagando o PATH do usuário. `.deb`/`.rpm`: `/usr/bin/devsuite`. Configurações → "CLI": status, "Adicionar ao PATH" e "Instalar skills" (`devsuite skills install`, padrão `~/.claude/skills`).
+
+15. **Redis (cliente completo)** (`redis_app/`, `redis*.js`, `redisModel.js`):
+   - Conexão: standalone (URL `redis://`/`rediss://` ou argumentos do redis-cli colados), Cluster (nós iniciais) ou Sentinel (sentinels + master; senha própria), ACL usuário/senha, TLS (sem verificação ou CA própria em PEM) e túnel SSH (senha ou chave + senha da chave). Segredos só no cofre. "Somente leitura" recusa no Rust comandos com a flag `write` do COMMAND INFO (subcomando em CONFIG/CLIENT/…); "ambiente sensível" exige digitar o nome para FLUSH, excluir, CLIENT KILL, CONFIG SET e comandos perigosos do console (`classifyCommand`).
+   - **Sessões**: uma conexão multiplexada por (sessão, banco): `meta` (árvore/abas), `console:<aba>` (sem timeout de resposta: BLPOP/XREAD BLOCK não travam o resto; Cancelar fecha a sessão), `analyze`, `cli`. Erro de rede descarta a sessão (reconecta no próximo comando). No Cluster cada sessão é uma `ClusterConnection` (só db 0) e `node` roteia por endereço.
+   - **SSH**: `Tunnels` abre um encaminhamento local por host:porta pedido e é o resolvedor de nomes do driver (SNI/certificado continuam os do host real; no Cluster cada nó anunciado ganha o seu). Monitor/Pub/Sub pelo túnel conectam direto na porta local (sem verificar o nome no certificado). Chave do host: `~/.ssh/known_hosts` ou `<app_data>/ssh_known_hosts` (TOFU); chave diferente = recusa. Sentinel por SSH não é suportado.
+   - **Árvore de chaves**: SCAN incremental (`scan_count` por página, "carregar mais"/"tudo" até 200 mil), filtro por padrão (MATCH) e tipo (SCAN TYPE), pastas pelo separador da conexão (`keyTreeRows`), lista virtualizada (linhas de 22 px). Clique abre em aba de pré-visualização (reaproveitada, título em itálico); duplo clique/edição fixa. Menu: TTL, renomear, excluir; pasta: filtrar, nova chave aqui, analisar memória, excluir por padrão (SCAN + UNLINK em lotes, contagem antes).
+   - **Aba da chave**: tipo, TTL (diálogo aceita 3600/30min/1h30m/7d; remover = PERSIST), tamanho, MEMORY USAGE, encoding, renomear (RENAMENX), COPY, RESTORE do DUMP. String: editor de valor (Automático/Texto/JSON/Hex/Base64; JSON compacto volta compacto; > 512 KB abre só leitura com "carregar tudo"; salvar usa SET KEEPTTL). Hash/set/zset: HSCAN/SSCAN/ZSCAN (filtro MATCH) ou ZRANGE por rank; list: LRANGE; remover da list = LSET marcador + LREM. Stream: XREVRANGE paginado, XADD, XDEL, XTRIM e grupos (XINFO GROUPS/CONSUMERS, XPENDING, XACK, XCLAIM, SETID, criar/excluir). RedisJSON: JSON.GET/JSON.SET.
+   - **Ferramentas**: Visão geral (INFO everything: tiles, alertas — maxmemory, evicted, rejected, BGSAVE/AOF, réplica, fragmentação —, gráficos de ops/s, memória e rede, keyspace, replicação, INFO filtrável), Configuração (CONFIG GET/SET/REWRITE), Slowlog e latência (SLOWLOG, LATENCY LATEST/DOCTOR), Clientes (CLIENT LIST/KILL), Monitor (filtro, pausar tela, top comandos, exportar), Pub/Sub (canais/padrões, publicar, PUBSUB CHANNELS/NUMSUB), Análise de memória (Rust, cancelável, pausa entre lotes), Nós do Cluster. Seletor de nó nas ferramentas quando é Cluster. Visão geral/clientes/slowlog seguem o auto-refresh.
+   - Ao vivo (Monitor, Pub/Sub, análise) aparece na pílula da barra e bloqueia desatachar (`blocker`). Modo bandeja: memória, clientes e ops/s de cada conexão a cada 15 s.
+
 ---
 
 ## 5. Instruções para Manutenção
@@ -395,10 +507,13 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 - Mantenha o arquivo `src/main.js` apenas para carregar o estado inicial e vincular ouvintes globais.
 - Sempre rode `./build_linux.sh` ou `cargo check` em `src-tauri` para validar alterações no código Rust ou builds.
 - Tarefas: `node tests/kanban.test.mjs`.
+- CLI: `node tests/cli.test.mjs` e `cargo test -p devsuite-cli` (parser); ponta a ponta com o app em dev (`cargo tauri dev`) e `src-tauri/target/debug/devsuite.exe status`.
 - Arquivos .md de fora das Notas: `node tests/mdfile.test.mjs` e `cargo test md_files`.
+- Git das Notas: `node tests/textdiff.test.mjs` e `cargo test notes_git` (precisa do `git` no PATH; sem ele os testes de integração são pulados).
 - Notas: `node tests/code-block.test.mjs` (blocos de código e realce), `node tests/zettel.test.mjs` (links, propriedades, grafo), `node tests/folders.test.mjs` (subpastas, importação de pasta, Postman aninhado), `node tests/vault.test.mjs` (cofre) e `cargo test notes` (notes_db + notes_vault) / `cargo test vault_file`.
-- Banco: `node tests/db-utils.test.mjs` e `node tests/mongo.test.mjs` (utilitários JS) e `cargo test` em `src-tauri`; MongoDB: `docker run -d -p 27019:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=TodoRs#Mongo2026 mongo:7` e `TODORS_MONGO_TEST="mongodb://admin@localhost:27019/?authSource=admin|TodoRs#Mongo2026" cargo test it_mongo`; os testes de integração precisam de um SQL Server: `docker run -d -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=TodoRs#Test2026" -p 14333:1433 mcr.microsoft.com/mssql/server:2022-latest` e `TODORS_MSSQL_TEST="localhost,14333,sa,TodoRs#Test2026" cargo test it_ -- --test-threads=1`.
+- Banco: `node tests/db-utils.test.mjs`, `node tests/sqlplan.test.mjs` (planos, IO/TIME, DMVs) e `node tests/mongo.test.mjs` (utilitários JS) e `cargo test` em `src-tauri`; MongoDB: `docker run -d -p 27019:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=TodoRs#Mongo2026 mongo:7` e `TODORS_MONGO_TEST="mongodb://admin@localhost:27019/?authSource=admin|TodoRs#Mongo2026" cargo test it_mongo`; os testes de integração precisam de um SQL Server: `docker run -d -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=TodoRs#Test2026" -p 14333:1433 mcr.microsoft.com/mssql/server:2022-latest` e `TODORS_MSSQL_TEST="localhost,14333,sa,TodoRs#Test2026" cargo test it_ -- --test-threads=1`.
 - RabbitMQ: `node tests/rabbit.test.mjs`, `cargo test rabbit`; integração: `docker run -d --name todors-rabbit-test -p 5673:5672 -p 15673:15672 rabbitmq:3-management` e `TODORS_RABBIT_TEST="http://localhost:15673|5673|guest|guest" cargo test it_rabbit -- --test-threads=1`.
+- Redis: `node tests/redis.test.mjs`, `cargo test redis`; integração: `docker run -d --name todors-redis-test -p 6380:6379 redis/redis-stack-server:latest` e `TODORS_REDIS_TEST="localhost|6380|" cargo test it_redis -- --test-threads=1`. Cluster: `docker run -d -e IP=0.0.0.0 -e INITIAL_PORT=7100 -p 7100-7105:7100-7105 grokzen/redis-cluster:7.0.10` + `TODORS_REDIS_CLUSTER_TEST="127.0.0.1:7100"`. Sentinel: `docker run -d -p 6390:6390 -p 26390:26390 redis:7 sh -c "redis-server --port 6390 --daemonize yes && printf 'port 26390\nsentinel monitor mymaster 127.0.0.1 6390 1\n' > /tmp/s.conf && exec redis-sentinel /tmp/s.conf"` + `TODORS_REDIS_SENTINEL_TEST="127.0.0.1:26390|mymaster"`. SSH: um sshd com AllowTcpForwarding na mesma rede docker do Redis + `TODORS_REDIS_SSH_TEST="127.0.0.1:2222|root|senha|todors-redis-test:6379"`.
 - **Desempenho**: comandos Tauri síncronos rodam na thread da UI. Gravações em disco devem usar `persist::write` (nunca `fs::write` direto num comando), e efeitos caros (ex.: `reg.exe` do autostart) só quando o valor muda.
 - Não salvar em disco ao navegar entre abas: só gravar quando houver alteração pendente.
 - Abas ocultas usam `display: none`. Não usar `content-visibility: hidden` nelas: com a aba JSON grande, todos os frames do app ficam ~45 ms mais lentos.

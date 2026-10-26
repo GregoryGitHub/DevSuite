@@ -225,6 +225,11 @@ async function editConnection(c) {
 async function deleteConnection(c) {
   const ok = await rmqConfirm({ title: "Excluir conexão?", message: `"${connLabel(c)}" será removida e a senha apagada do cofre do sistema. As mensagens gravadas continuam no rabbit.db.`, confirmLabel: "Excluir", danger: true });
   if (!ok) return;
+  await removeConnection(c);
+}
+
+/** Remove a conexão (para as gravações dela e apaga a senha), sem perguntar. */
+async function removeConnection(c) {
   for (const cap of [...live.values()].filter((x) => x.conn_id === c.id)) await rabbitApi.captureStop(cap.id).catch(() => {});
   await rabbitApi.forgetPassword(c.id);
   R.connections = R.connections.filter((x) => x.id !== c.id);
@@ -786,8 +791,7 @@ function onCaptureEvent(ev) {
   for (const fn of captureListeners) fn(ev);
 }
 
-async function startCapture(spec) {
-  const c = conn();
+async function startCapture(spec, c = conn()) {
   const info = await rabbitApi.captureStart(connConfig(c), spec, onCaptureEvent);
   live.set(info.id, { ...info, queues: captureQueues(info), count: 0 });
   renderTree();
@@ -1017,3 +1021,20 @@ export function initRabbit() {
     reload: () => loadRabbit(),
   });
 }
+
+// ---------- CLI (js/cli/rabbitCli.js) ----------
+
+/** Operações do RabbitMQ usadas pela CLI `devsuite`, sobre o estado vivo desta janela. */
+export const rabbitHost = {
+  connections: () => R.connections,
+  settings: () => R.settings,
+  startCapture: (c, spec) => startCapture(spec, c),
+  async addConnection(c, password) {
+    R.connections.push(c);
+    if (password !== undefined) await rabbitApi.setPassword(c.id, password);
+    await saveConnections();
+    renderAll();
+  },
+  removeConnection,
+  refreshSoon,
+};

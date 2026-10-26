@@ -2,7 +2,7 @@
 // que o Rust cria com window.__DEVSUITE_APP__ = "<app>" (ver src-tauri/src/app_windows.rs).
 
 /** Apps que podem sair para uma janela própria (Configurações fica sempre na principal). */
-export const DETACHABLE = ["tasks", "notes", "http", "json", "db", "rabbit"];
+export const DETACHABLE = ["tasks", "notes", "http", "json", "db", "rabbit", "redis"];
 
 /** App desta janela desatachada, ou null na janela principal. */
 export const SOLO_APP = DETACHABLE.includes(window.__DEVSUITE_APP__) ? window.__DEVSUITE_APP__ : null;

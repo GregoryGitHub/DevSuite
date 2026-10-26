@@ -1,4 +1,5 @@
-// Aba "Banco": formato do databases.json (conexões sem segredos, consoles, abas e histórico).
+// Aba "Banco": formato do databases.json (conexões sem segredos, consoles, consultas salvas,
+// abas e histórico).
 // Senhas e tokens ficam no cofre do sistema (src-tauri/src/db/secrets.rs), nunca aqui.
 
 export const DB_VERSION = 1;
@@ -93,11 +94,74 @@ function normalizeConsole(c = {}) {
     database: String(c.database || ""),
     name: String(c.name || "console"),
     sql: String(c.sql || ""),
+    /** Consulta salva aberta neste console (Ctrl+S atualiza ela). */
+    saved_id: String(c.saved_id || ""),
+    /** Últimos valores dos parâmetros (:nome / {{nome}}) usados neste console. */
+    params: normalizeParams(c.params),
+    /** SQL Server: SET STATISTICS IO/TIME em toda execução (aba "Estatísticas"). */
+    stats: c.stats === true,
   };
 }
 
+function normalizeParams(p) {
+  const out = {};
+  if (!p || typeof p !== "object") return out;
+  for (const [name, v] of Object.entries(p)) {
+    if (!v || typeof v !== "object") continue;
+    out[name] = { type: String(v.type || "auto"), last: String(v.last ?? "") };
+  }
+  return out;
+}
+
+/** "a / b//c " → "a/b/c" (pastas das consultas salvas). */
+export function normalizeFolder(f) {
+  return String(f || "")
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("/");
+}
+
+function normalizeQuery(q = {}) {
+  const now = Date.now();
+  return {
+    id: q.id || uid(),
+    conn_id: String(q.conn_id || ""),
+    database: String(q.database || ""),
+    folder: normalizeFolder(q.folder),
+    name: String(q.name || "consulta").trim() || "consulta",
+    description: String(q.description || ""),
+    sql: String(q.sql || ""),
+    params: normalizeParams(q.params),
+    created_at: Number(q.created_at) || now,
+    updated_at: Number(q.updated_at) || Number(q.created_at) || now,
+  };
+}
+
+export function newSavedQuery(patch = {}) {
+  return normalizeQuery({ id: uid(), ...patch, created_at: Date.now(), updated_at: Date.now() });
+}
+
+/**
+ * Consultas salvas de um banco. `isDefault`: o banco é o padrão da conexão (consultas salvas
+ * sem banco, quando o banco padrão era o do login, aparecem nele).
+ */
+export function queriesFor(data, connId, database, isDefault = false) {
+  return data.queries.filter((q) => q.conn_id === connId && (q.database === database || (!q.database && isDefault)));
+}
+
+/** Pastas usadas pelas consultas de um banco (com os níveis intermediários), em ordem. */
+export function queryFolders(list) {
+  const set = new Set();
+  for (const q of list) {
+    const parts = q.folder ? q.folder.split("/") : [];
+    for (let i = 1; i <= parts.length; i++) set.add(parts.slice(0, i).join("/"));
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "pt-BR", { sensitivity: "base" }));
+}
+
 function normalizeTab(t = {}) {
-  if (!t || !["table", "console", "ddl"].includes(t.type)) return null;
+  if (!t || !["table", "console", "ddl", "plan", "perf"].includes(t.type)) return null;
   return {
     id: t.id || uid(),
     type: t.type,
@@ -111,7 +175,8 @@ function normalizeTab(t = {}) {
     order_by: String(t.order_by || ""),
     /** MongoDB: projeção da aba de coleção. */
     projection: String(t.projection || ""),
-    /** DDL do banco inteiro (kind "database"): opções do script (DbScriptOptions). */
+    /** DDL do banco inteiro (kind "database"): opções do script (DbScriptOptions).
+     *  plan: { path } (arquivo .sqlplan); perf: { section, ... } da aba Desempenho. */
     options: t.options && typeof t.options === "object" ? { ...t.options } : null,
   };
 }
@@ -125,11 +190,14 @@ export function normalizeDbData(raw) {
   const consoleIds = new Set(consoles.map((c) => c.id));
   const tabs = (Array.isArray(ui.tabs) ? ui.tabs : [])
     .map(normalizeTab)
-    .filter((t) => t && ids.has(t.conn_id) && (t.type !== "console" || consoleIds.has(t.console_id)));
+    .filter((t) => t && ids.has(t.conn_id) && (t.type !== "console" || consoleIds.has(t.console_id)))
+    // O XML dos planos só existe em memória: só a aba aberta de um arquivo volta.
+    .filter((t) => t.type !== "plan" || t.options?.path);
   return {
     version: DB_VERSION,
     connections,
     consoles,
+    queries: (Array.isArray(d.queries) ? d.queries : []).map(normalizeQuery).filter((q) => ids.has(q.conn_id)),
     history: (Array.isArray(d.history) ? d.history : []).slice(0, HISTORY_LIMIT),
     ui: {
       tabs,

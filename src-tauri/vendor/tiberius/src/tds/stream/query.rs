@@ -144,6 +144,8 @@ impl<'a> QueryStream<'a> {
                 {
                     break
                 }
+                // TodoRS patch: mensagens INFO (PRINT, SET STATISTICS IO/TIME) também param aqui.
+                Some(ReceivedToken::Info(_)) if self.report_done => break,
                 Some(_) => {
                     self.token_stream.try_next().await?;
                 }
@@ -264,7 +266,7 @@ impl<'a> QueryStream<'a> {
         let s = self.try_filter_map(|item| async {
             match item {
                 QueryItem::Row(row) => Ok(Some(row)),
-                QueryItem::Metadata(_) | QueryItem::RowsAffected { .. } => Ok(None),
+                QueryItem::Metadata(_) | QueryItem::RowsAffected { .. } | QueryItem::Info { .. } => Ok(None),
             }
         });
 
@@ -310,7 +312,7 @@ where
                 // a result set on the fly rather than discard a leading row.
                 current.get_or_insert_with(Vec::new).push(row);
             }
-            QueryItem::RowsAffected { .. } => {}
+            QueryItem::RowsAffected { .. } | QueryItem::Info { .. } => {}
         }
     }
 
@@ -356,6 +358,22 @@ pub enum QueryItem {
         rows: u64,
         /// Tipo do comando (0xC1 SELECT, 0xC3 INSERT, 0xC4 DELETE, 0xC5 UPDATE...).
         command: u16,
+    },
+    /// TodoRS patch: mensagem informativa do servidor (token INFO: PRINT, SET STATISTICS
+    /// IO/TIME, avisos); só emitida depois de [`QueryStream::with_rows_affected`].
+    Info {
+        /// Número da mensagem (ex.: 3615 = STATISTICS IO, 3612/3613 = STATISTICS TIME).
+        number: u32,
+        /// Estado.
+        state: u8,
+        /// Severidade (0..10 = informativa).
+        class: u8,
+        /// Texto (no idioma do login).
+        message: String,
+        /// Procedure de origem (vazio = lote).
+        procedure: String,
+        /// Linha no lote/procedure.
+        line: u32,
     },
 }
 
@@ -458,6 +476,14 @@ impl<'a> Stream for QueryStream<'a> {
                         command: done.cur_cmd(),
                     })))
                 }
+                ReceivedToken::Info(info) if this.report_done => Poll::Ready(Some(Ok(QueryItem::Info {
+                    number: info.number,
+                    state: info.state,
+                    class: info.class,
+                    message: info.message,
+                    procedure: info.procedure,
+                    line: info.line,
+                }))),
                 _ => continue,
             };
         }

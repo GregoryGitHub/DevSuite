@@ -35,6 +35,8 @@ export function setVaultContext(ctx) {
 /** Enfileira uma operação no banco; erros vão para onError (a fila continua). */
 function enqueue(op, onError) {
   const run = chain.then(op);
+  // Gravou no cofre: o painel Git (noteGit.js) atualiza o status.
+  if (isVault() && onError) run.then(() => document.dispatchEvent(new CustomEvent("notesvaultwrite")), () => {});
   chain = run.catch((e) => {
     console.error("notes.db:", e);
     onError?.(String(e));

@@ -1,0 +1,1120 @@
+/* =========================================================================
+   Controle de versão (git) das Notas — modo cofre
+   - painel na metade de baixo da barra lateral (js/components/noteGit.js)
+   - diff estilo JetBrains no lugar da lista + editor (js/components/diffView.js)
+   - diálogos (js/components/gitDialogs.js)
+   ========================================================================= */
+
+:root {
+  /* Cores dos blocos (Darcula). Inserido = verde, modificado = azul, removido = cinza. */
+  --diff-ins: rgba(73, 148, 92, 0.24);
+  --diff-ins-strong: rgba(83, 178, 104, 0.5);
+  --diff-ins-line: rgba(98, 151, 85, 0.85);
+  --diff-mod: rgba(56, 108, 178, 0.26);
+  --diff-mod-strong: rgba(76, 142, 230, 0.5);
+  --diff-mod-line: rgba(104, 151, 187, 0.9);
+  --diff-del: rgba(128, 128, 128, 0.24);
+  --diff-del-strong: rgba(160, 160, 160, 0.45);
+  --diff-del-line: rgba(140, 140, 140, 0.9);
+  --diff-conflict: rgba(196, 82, 72, 0.26);
+  /* Status dos arquivos (cores das IDEs JetBrains) */
+  --vcs-modified: #6897bb;
+  --vcs-added: #629755;
+  --vcs-deleted: #8c8c8c;
+  --vcs-untracked: #d1675a;
+  --vcs-conflicted: #e5534b;
+}
+
+:root[data-theme="light"] {
+  --diff-ins: rgba(156, 220, 168, 0.45);
+  --diff-ins-strong: rgba(80, 180, 100, 0.45);
+  --diff-ins-line: rgba(80, 160, 95, 0.9);
+  --diff-mod: rgba(198, 218, 252, 0.7);
+  --diff-mod-strong: rgba(120, 165, 240, 0.55);
+  --diff-mod-line: rgba(90, 140, 220, 0.9);
+  --diff-del: rgba(210, 210, 210, 0.6);
+  --diff-del-strong: rgba(160, 160, 160, 0.55);
+  --diff-del-line: rgba(150, 150, 150, 0.9);
+  --diff-conflict: rgba(250, 200, 196, 0.7);
+  --vcs-modified: #0a5fb4;
+  --vcs-added: #2a7d30;
+  --vcs-deleted: #8a8a8a;
+  --vcs-untracked: #b0432d;
+  --vcs-conflicted: #c4241b;
+}
+
+.notes-app,
+.gd-overlay {
+  --hx-input-bg: rgba(var(--fg-rgb), 0.045);
+  --hx-input-border: rgba(var(--fg-rgb), 0.12);
+  --hx-accent: var(--nt-yellow);
+  --hx-accent-hover: var(--nt-yellow);
+}
+
+.notes-app .hx-btn.primary,
+.gd-overlay .hx-btn.primary {
+  color: #1d1d1f !important;
+}
+
+:root[data-theme="light"] .notes-app .hx-btn.primary,
+:root[data-theme="light"] .gd-overlay .hx-btn.primary {
+  color: #fff !important;
+}
+
+.gd-overlay {
+  position: fixed;
+  z-index: 300;
+}
+
+.gd-overlay[hidden] {
+  display: none;
+}
+
+/* ---------- Barra lateral dividida ---------- */
+
+.nt-vcs[hidden],
+.nt-vcs-split[hidden] {
+  display: none !important;
+}
+
+body:not(.desktop-mode) .nt-vcs,
+body:not(.desktop-mode) .nt-vcs-split {
+  display: none !important;
+}
+
+.nt-vcs-split {
+  margin: 6px -10px 4px;
+}
+
+/* "Nova Pasta" com respiro antes do painel. */
+body.desktop-mode .notes-app.vault .nt-new-folder {
+  padding-bottom: 8px;
+}
+
+.nt-vcs {
+  flex: 0 0 auto;
+  height: calc(var(--nt-vcs-ratio, 0.5) * 100%);
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  margin: 0 -4px;
+  font-size: 12px;
+}
+
+/* Com o painel, a lista de pastas fica com o resto da altura (rola sozinha). */
+.notes-app.vault .nt-sidebar-scroll {
+  min-height: 80px;
+}
+
+/* Cabeçalho da seção (estilo VS Code): recolhe/expande. */
+.nt-vcs-title {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--nt-muted) !important;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nt-vcs-title:hover {
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--nt-text) !important;
+}
+
+.nt-vcs-title-chev {
+  width: 10px;
+  font-size: 8px;
+}
+
+.nt-vcs-title .nt-vcs-badge {
+  letter-spacing: 0;
+}
+
+.nt-vcs-title .nt-vcs-badge[hidden] {
+  display: none;
+}
+
+.nt-vcs-title .nt-vcs-branch {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.nt-vcs-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Recolhido: só o cabeçalho, com uma linha separando das pastas (sem o divisor arrastável). */
+.nt-vcs.collapsed {
+  height: auto;
+  min-height: 0;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--nt-sep);
+}
+
+.nt-vcs.collapsed .nt-vcs-body {
+  display: none;
+}
+
+.nt-vcs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 4px;
+}
+
+.nt-vcs-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(var(--fg-rgb), 0.06);
+}
+
+.nt-vcs-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--nt-muted) !important;
+  cursor: pointer;
+}
+
+.nt-vcs-tab.active {
+  background: rgba(var(--fg-rgb), 0.12);
+  color: var(--nt-text) !important;
+}
+
+.nt-vcs-badge {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--nt-yellow);
+  color: #1d1d1f;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.nt-vcs-branch {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--nt-muted);
+  font-size: 11px;
+}
+
+.nt-vcs-ab {
+  margin-left: 3px;
+  font-weight: 600;
+}
+
+.nt-vcs-ab.up {
+  color: var(--vcs-added);
+}
+
+.nt-vcs-ab.down {
+  color: var(--vcs-modified);
+}
+
+.nt-vcs-tools {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid var(--nt-sep);
+}
+
+.nt-vcs-tool {
+  width: 26px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--nt-text-2) !important;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nt-vcs-tool:hover:not(:disabled) {
+  background: var(--nt-hover);
+  color: var(--nt-text) !important;
+}
+
+.nt-vcs-tool.dim {
+  opacity: 0.55;
+}
+
+.nt-vcs-tool.active {
+  color: var(--nt-yellow) !important;
+}
+
+.nt-vcs-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--nt-sep-strong);
+}
+
+.nt-vcs-busy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--nt-muted);
+  font-size: 11px;
+}
+
+.nt-vcs-cancel {
+  border: none;
+  background: none;
+  color: var(--nt-muted) !important;
+  cursor: pointer;
+}
+
+.nt-vcs-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 4px 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--nt-text-2);
+  line-height: 1.4;
+}
+
+.nt-vcs-banner[hidden] {
+  display: none;
+}
+
+.nt-vcs-banner p {
+  margin: 0;
+}
+
+.nt-vcs-hint {
+  color: var(--nt-muted);
+  font-size: 11px;
+}
+
+.nt-vcs-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--nt-yellow) !important;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.nt-vcs-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nt-vcs-view[hidden] {
+  display: none;
+}
+
+.nt-vcs-list,
+.nt-vcs-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fg-rgb), 0.18) transparent;
+}
+
+.nt-vcs-empty {
+  padding: 14px 8px;
+  color: var(--nt-muted);
+  text-align: center;
+}
+
+.nt-vcs-empty.small {
+  padding: 4px 8px 6px 30px;
+  text-align: left;
+  font-size: 11px;
+}
+
+.nt-vcs-row {
+  --depth: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px 0 calc(4px + var(--depth) * 14px);
+  border-radius: 5px;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.nt-vcs-row:hover {
+  background: rgba(var(--fg-rgb), 0.05);
+}
+
+.nt-vcs-row.selected {
+  background: var(--nt-yellow-soft);
+}
+
+.nt-vcs-row.group {
+  font-weight: 600;
+  color: var(--nt-text-2);
+}
+
+.nt-vcs-row > i:not(.nt-vcs-chev) {
+  width: 13px;
+  flex-shrink: 0;
+  color: var(--nt-muted);
+  text-align: center;
+}
+
+.nt-vcs-chev {
+  width: 10px;
+  flex-shrink: 0;
+  font-size: 8px;
+  color: var(--nt-muted);
+  text-align: center;
+}
+
+.nt-vcs-check {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: var(--nt-yellow);
+}
+
+.nt-vcs-check-pad {
+  width: 13px;
+  flex-shrink: 0;
+}
+
+.nt-vcs-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nt-vcs-count {
+  margin-left: auto;
+  padding-left: 6px;
+  color: var(--nt-muted);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.nt-vcs-was {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--nt-muted);
+  font-size: 10.5px;
+}
+
+.nt-vcs-row.file.modified .nt-vcs-name,
+.nt-vcs-row.file.renamed .nt-vcs-name {
+  color: var(--vcs-modified);
+}
+
+.nt-vcs-row.file.added .nt-vcs-name {
+  color: var(--vcs-added);
+}
+
+.nt-vcs-row.file.deleted .nt-vcs-name {
+  color: var(--vcs-deleted);
+  text-decoration: line-through;
+}
+
+.nt-vcs-row.file.untracked .nt-vcs-name {
+  color: var(--vcs-untracked);
+}
+
+.nt-vcs-row.file.conflicted .nt-vcs-name {
+  color: var(--vcs-conflicted);
+  font-weight: 600;
+}
+
+/* Commit */
+.nt-vcs-commit {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 4px 0;
+  border-top: 1px solid var(--nt-sep);
+}
+
+.nt-vcs-commit[hidden] {
+  display: none;
+}
+
+.nt-vcs-msg {
+  width: 100%;
+  min-height: 48px;
+  max-height: 140px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--hx-input-border);
+  border-radius: 7px;
+  background: var(--hx-input-bg);
+  color: var(--nt-text);
+  font: 12px/1.4 var(--nt-font);
+  outline: none;
+}
+
+.nt-vcs-msg:focus {
+  border-color: var(--nt-yellow);
+}
+
+.nt-vcs-commit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.nt-vcs-commit-row .nt-vcs-commit-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+
+/* "Corrigir último" numa linha própria; os dois botões dividem a de baixo. */
+.nt-vcs-grow {
+  flex-basis: 100%;
+  height: 0;
+}
+
+.nt-vcs-amend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--nt-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.nt-vcs-amend input {
+  margin: 0;
+  accent-color: var(--nt-yellow);
+}
+
+.nt-vcs-commit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--nt-yellow);
+  color: #1d1d1f !important;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+:root[data-theme="light"] .nt-vcs-commit-btn {
+  color: #fff !important;
+}
+
+.nt-vcs-commit-btn.secondary {
+  background: rgba(var(--fg-rgb), 0.09);
+  color: var(--nt-text) !important;
+  font-weight: 500;
+}
+
+/* Histórico */
+.nt-vcs-log-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--nt-sep);
+  color: var(--nt-text-2);
+  font-size: 11px;
+}
+
+.nt-vcs-log-head[hidden] {
+  display: none;
+}
+
+.nt-vcs-log-head span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nt-vcs-commitrow {
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: default;
+}
+
+.nt-vcs-commitrow:hover,
+.nt-vcs-commitrow.open {
+  background: rgba(var(--fg-rgb), 0.05);
+}
+
+.nt-vcs-subject {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--nt-text);
+}
+
+.nt-vcs-subject > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nt-vcs-ref {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--nt-yellow-soft);
+  color: var(--nt-yellow);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.nt-vcs-ref.remote {
+  background: rgba(104, 151, 187, 0.18);
+  color: var(--vcs-modified);
+}
+
+.nt-vcs-meta {
+  padding-left: 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nt-muted);
+  font-size: 10.5px;
+}
+
+.nt-vcs-meta code {
+  font-family: var(--nt-mono);
+  font-size: 10px;
+}
+
+/* Rótulo do cofre: ponto quando há alterações não commitadas. */
+.nt-storage-switch.has-changes #nt-storage-label::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--vcs-modified);
+  vertical-align: middle;
+}
+
+/* ---------- Diff ---------- */
+
+.nt-diff-pane {
+  display: none;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  outline: none;
+  background: var(--nt-bg);
+}
+
+body.desktop-mode .notes-app[data-view="diff"] .nt-list-pane,
+body.desktop-mode .notes-app[data-view="diff"] .nt-editor-pane,
+body.desktop-mode .notes-app[data-view="diff"] .nt-graph-pane {
+  display: none;
+}
+
+body.desktop-mode .notes-app[data-view="diff"] .nt-diff-pane {
+  display: flex;
+  flex: 1;
+  border-left: 1px solid var(--nt-sep);
+}
+
+.notes-app[data-view="diff"] .nt-tb-editor .nt-tb-group,
+.notes-app[data-view="diff"] .nt-tb-editor [data-action="more"],
+.notes-app[data-view="diff"] .nt-tb-editor [data-action="graph-local"],
+.notes-app[data-view="diff"] .nt-tb-list [data-action="delete-note"] {
+  visibility: hidden;
+}
+
+.gd-bar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 8px 4px 14px;
+  border-bottom: 1px solid var(--nt-sep);
+}
+
+.gd-titles {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.gd-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.gd-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--nt-muted);
+  font-size: 11px;
+}
+
+.gd-group {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gd-group[hidden] {
+  display: none;
+}
+
+.gd-spacer {
+  flex: 1;
+}
+
+.gd-btn {
+  width: 28px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--nt-text-2) !important;
+  cursor: pointer;
+}
+
+.gd-btn:hover {
+  background: var(--nt-hover);
+}
+
+.gd-btn.gd-toggle.active {
+  background: var(--nt-yellow-soft);
+  color: var(--nt-yellow) !important;
+}
+
+.gd-counter {
+  padding: 0 6px;
+  color: var(--nt-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.gd-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gd-empty {
+  margin: auto;
+  padding: 30px;
+  color: var(--nt-muted);
+}
+
+.gd-side,
+.gd-merge {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.gd-uni {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.gd-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gd-merge .gd-col + .gd-col {
+  border-left: 1px solid var(--nt-sep);
+}
+
+.gd-col-result {
+  flex: 1.15;
+}
+
+.gd-col-result .ce {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.gd-phead {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--nt-sep);
+  background: rgba(var(--fg-rgb), 0.025);
+  color: var(--nt-text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.gd-phead em {
+  color: var(--nt-muted);
+  font-weight: 400;
+}
+
+.gd-gcol {
+  flex: 0 0 46px;
+  display: flex;
+  flex-direction: column;
+}
+
+.gd-gutter {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(var(--fg-rgb), 0.02);
+}
+
+.gd-gutter svg {
+  position: absolute;
+  inset: 0;
+}
+
+.gd-band {
+  stroke-width: 1;
+}
+
+.gd-band.insert {
+  fill: var(--diff-ins);
+  stroke: var(--diff-ins-line);
+}
+
+.gd-band.modify {
+  fill: var(--diff-mod);
+  stroke: var(--diff-mod-line);
+}
+
+.gd-band.delete {
+  fill: var(--diff-del);
+  stroke: var(--diff-del-line);
+}
+
+.gd-revert {
+  position: absolute;
+  left: 2px;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--c-elevated);
+  color: var(--nt-text-2) !important;
+  font-size: 9px;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px var(--nt-sep-strong);
+}
+
+.gd-revert:hover {
+  background: var(--nt-yellow);
+  color: #1d1d1f !important;
+}
+
+.gd-pane {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.gd-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--fg-rgb), 0.18) transparent;
+}
+
+.gd-canvas {
+  position: relative;
+  font: 12.5px/20px var(--nt-mono);
+}
+
+.gd-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+  display: flex;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.gd-ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: 0 0 48px;
+  padding-right: 10px;
+  background: var(--nt-bg);
+  color: var(--nt-muted);
+  text-align: right;
+  font-size: 11px;
+  user-select: none;
+}
+
+.two-numbers .gd-ln {
+  flex-basis: 44px;
+}
+
+.two-numbers .gd-ln + .gd-ln {
+  left: 44px;
+  border-right: 1px solid var(--nt-sep);
+  margin-right: 6px;
+}
+
+.gd-code {
+  flex: 1;
+  padding-left: 8px;
+  color: var(--syn-plain);
+}
+
+.gd-row.insert,
+.gd-row.ins {
+  background: var(--diff-ins);
+}
+
+.gd-row.modify {
+  background: var(--diff-mod);
+}
+
+.gd-row.delete,
+.gd-row.del {
+  background: var(--diff-del);
+}
+
+/* As palavras alteradas: tom mais forte da mesma cor do bloco. */
+.gd-row .gd-w {
+  border-radius: 2px;
+}
+
+.gd-row.modify .gd-w {
+  background: var(--diff-mod-strong);
+}
+
+.gd-row.del .gd-w {
+  background: var(--diff-del-strong);
+}
+
+.gd-row.ins .gd-w {
+  background: var(--diff-ins-strong);
+}
+
+.gd-row.fold {
+  background: rgba(var(--fg-rgb), 0.035);
+  border-top: 1px dashed var(--nt-sep-strong);
+  border-bottom: 1px dashed var(--nt-sep-strong);
+}
+
+.gd-fold {
+  position: sticky;
+  left: 0;
+  padding-left: 18px;
+  color: var(--nt-muted);
+  font-family: var(--nt-font);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.gd-fold:hover {
+  color: var(--nt-yellow);
+}
+
+/* Linha fina onde o outro lado inseriu/removeu algo (este lado não tem linhas no bloco). */
+.gd-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 2;
+}
+
+.gd-marker.insert {
+  background: var(--diff-ins-line);
+}
+
+.gd-marker.delete {
+  background: var(--diff-del-line);
+}
+
+.gd-marker.modify {
+  background: var(--diff-mod-line);
+}
+
+/* Conflito */
+.gd-merge-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--nt-sep);
+}
+
+.gd-merge-cur {
+  color: var(--nt-text-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gd-merge-state {
+  color: var(--vcs-conflicted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.gd-merge-state.ok {
+  color: var(--vcs-added);
+}
+
+.gd-merge-actions .hx-btn {
+  height: 26px;
+  padding: 0 9px;
+}
+
+/* ---------- Diálogos ---------- */
+
+.gd-dlg {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--nt-text-2);
+}
+
+.gd-field .hx-input {
+  width: 100%;
+  color: var(--nt-text);
+}
+
+.gd-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gd-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nt-muted);
+  font-size: 12px;
+}
+
+.gd-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nt-text-2);
+  font-size: 12px;
+}
+
+.gd-dlg-hint {
+  margin: 0;
+  color: var(--nt-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.gd-dlg-status {
+  margin: 0;
+  min-height: 1em;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gd-dlg-status.ok {
+  color: var(--vcs-added);
+}
+
+.gd-dlg-status.bad {
+  color: var(--c-danger-text);
+}
+
+.hx-modal-foot .gd-spacer {
+  flex: 1;
+}

@@ -33,12 +33,14 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="notes.css" />
     <link rel="stylesheet" href="zettel.css" />
+    <link rel="stylesheet" href="git.css" />
     <link rel="stylesheet" href="http.css" />
     <link rel="stylesheet" href="json.css" />
     <link rel="stylesheet" href="tasks.css" />
     <link rel="stylesheet" href="code.css" />
     <link rel="stylesheet" href="db.css" />
     <link rel="stylesheet" href="rabbit.css" />
+    <link rel="stylesheet" href="redis.css" />
   </head>
   <body>
     <main class="app">
@@ -285,6 +287,9 @@
                 <button class="nt-new-folder" data-action="new-folder">
                   <i class="fa-solid fa-circle-plus"></i> Nova Pasta
                 </button>
+                <!-- Controle de versão do cofre (js/components/noteGit.js): metade de baixo, só no desktop -->
+                <div id="nt-vcs-split" class="nt-vcs-split db-split-h" title="Arraste para redimensionar (duplo clique: metade)" hidden></div>
+                <section id="nt-vcs" class="nt-vcs" hidden></section>
               </aside>
 
               <!-- Lista de notas -->
@@ -370,6 +375,8 @@
 
               <!-- Grafo das notas (modo Zettelkasten; montado por noteGraph.js) -->
               <section id="nt-graph" class="nt-graph-pane" tabindex="-1"></section>
+              <!-- Diff do git (js/components/diffView.js) -->
+              <section id="nt-diff" class="nt-diff-pane" tabindex="-1"></section>
             </div>
 
             <!-- Popover de formatação (dropdown no desktop, folha inferior na bandeja) -->
@@ -875,6 +882,94 @@
           </div>
         </div>
 
+        <!-- VIEW: REDIS (chaves, console, monitor, pub/sub, memória) -->
+        <div id="view-redis" class="view-panel" hidden>
+          <div id="rds-app" class="notes-app db-app rmq-app rds-app">
+            <!-- Desktop: barra de ferramentas unificada -->
+            <header class="nt-toolbar desktop-only" data-tauri-drag-region>
+              <div class="nt-tb-editor db-toolbar" data-tauri-drag-region>
+                <div class="app-switch"></div>
+                <button class="nt-tb-btn" data-action="toggle-side" title="Mostrar/ocultar conexões e chaves">
+                  <i class="fa-solid fa-table-columns"></i>
+                </button>
+                <div class="nt-tb-title" data-tauri-drag-region>
+                  <strong id="rds-tb-title">Redis</strong>
+                  <span id="rds-tb-sub">Chaves, console e depuração</span>
+                </div>
+                <div class="nt-tb-group">
+                  <button class="nt-tb-btn" data-action="new-connection" title="Nova conexão"><i class="fa-solid fa-plus"></i></button>
+                  <button class="nt-tb-btn" data-action="new-key" title="Nova chave (Ctrl+N)"><i class="fa-solid fa-key"></i></button>
+                  <button class="nt-tb-btn" data-action="console" title="Console (Ctrl+Shift+Q)"><i class="fa-solid fa-terminal"></i></button>
+                  <button class="nt-tb-btn" data-action="refresh" title="Atualizar (F5)"><i class="fa-solid fa-rotate"></i></button>
+                  <button class="nt-tb-btn rmq-refresh-btn" data-action="refresh-menu" title="Atualização automática da visão geral"><i class="fa-regular fa-clock"></i><span id="rds-refresh-label"></span></button>
+                </div>
+                <button id="rds-live-pill" class="rmq-rec-pill" type="button" data-action="live-menu" hidden></button>
+                <div class="nt-tb-spacer" data-tauri-drag-region></div>
+                <button class="nt-tb-btn" data-theme-toggle title="Alternar tema claro/escuro">
+                  <i class="fa-solid fa-moon"></i>
+                </button>
+                <button class="nt-tb-btn" data-detach title="Abrir em janela própria">
+                  <i class="fa-solid fa-up-right-from-square"></i>
+                </button>
+                <button class="nt-tb-btn" data-action="tray" title="Voltar ao modo bandeja">
+                  <i class="fa-solid fa-down-left-and-up-right-to-center"></i>
+                </button>
+                <div class="win-caption">
+                  <button class="win-btn" data-action="minimize" title="Minimizar">
+                    <svg viewBox="0 0 10 10"><path d="M0 5.5h10" /></svg>
+                  </button>
+                  <button class="win-btn" data-action="maximize" title="Maximizar / Restaurar">
+                    <svg class="ic-max" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1" /></svg>
+                    <svg class="ic-restore" viewBox="0 0 10 10"><rect x="0.5" y="2.5" width="7" height="7" rx="1" /><path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1" /></svg>
+                  </button>
+                  <button class="win-btn win-close" data-action="close-desktop" title="Fechar (volta para a bandeja)">
+                    <svg viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9" /></svg>
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            <!-- Desktop: conexões + chaves | abas -->
+            <div class="db-body desktop-only">
+              <aside class="db-explorer rds-side">
+                <div class="db-pane-head">
+                  <span>Conexões</span>
+                  <span class="hx-flex"></span>
+                  <button class="hx-icon-btn" data-action="new-connection" title="Nova conexão"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <div id="rds-conns" class="rds-conns"></div>
+                <section id="rds-keys" class="rds-keys"></section>
+              </aside>
+              <div class="db-split-v" data-split="side" title="Arraste para redimensionar"></div>
+              <main class="db-main">
+                <div id="rds-tabs" class="db-tabs"></div>
+                <div id="rds-tab-body" class="db-tab-body rds-tab-body"></div>
+              </main>
+            </div>
+
+            <!-- Bandeja: resumo das conexões -->
+            <div class="db-compact compact-only">
+              <div class="nt-nav">
+                <h2 class="nt-large-title">Redis</h2>
+                <div class="nt-nav-actions">
+                  <button class="nt-icon-btn" data-action="new-connection" title="Nova conexão">
+                    <i class="fa-solid fa-plus"></i>
+                  </button>
+                  <button class="nt-icon-btn" data-action="desktop" title="Abrir no modo desktop">
+                    <i class="fa-solid fa-up-right-and-down-left-from-center"></i>
+                  </button>
+                </div>
+              </div>
+              <div id="rds-compact-list" class="db-compact-list"></div>
+              <p class="db-compact-hint">Chaves, console, monitor e análise abrem no modo desktop.</p>
+            </div>
+
+            <div id="rds-menu" class="nt-menu" hidden></div>
+            <div id="rds-modal" class="hx-modal-overlay" hidden></div>
+            <div id="rds-toast" class="hx-toast" hidden></div>
+          </div>
+        </div>
+
         <!-- VIEW 5: SETTINGS -->
         <div id="view-settings" class="view-panel" hidden>
           <!-- Desktop: barra de ferramentas unificada (como as outras abas) -->
@@ -992,6 +1087,7 @@
                 <ul id="setting-vault-list" class="setting-vault-list"></ul>
                 <span id="setting-vault-status" class="setting-desc setting-status" hidden></span>
               </div>
+              <button type="button" id="setting-vault-create" class="setting-btn" title="Cria uma pasta nova já com controle de versão (git)">Criar novo…</button>
               <button type="button" id="setting-vault-pick" class="setting-btn">Escolher…</button>
             </div>
 
@@ -1004,6 +1100,19 @@
                 <input type="checkbox" id="setting-vault-copy" />
                 <span class="slider"></span>
               </label>
+            </div>
+
+            <div class="setting-item">
+              <div class="setting-info setting-info-grow">
+                <span class="setting-title">CLI para scripts e agentes de IA</span>
+                <span class="setting-desc">O comando <code>devsuite</code> expõe notas, tarefas, HTTP, bancos, RabbitMQ e Redis no terminal (<code>devsuite --help</code>). As skills ensinam agentes de IA a usá-lo.</span>
+                <span id="setting-cli-info" class="setting-desc setting-path"></span>
+                <span id="setting-cli-status" class="setting-desc setting-status" hidden></span>
+              </div>
+              <div class="setting-actions">
+                <button type="button" id="setting-cli-path" class="setting-btn">Adicionar ao PATH</button>
+                <button type="button" id="setting-cli-skills" class="setting-btn">Instalar skills</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1028,6 +1137,9 @@
         </button>
         <button class="bottom-tab" data-view="rabbit" title="RabbitMQ">
           <i class="fa-solid fa-envelopes-bulk"></i>
+        </button>
+        <button class="bottom-tab" data-view="redis" title="Redis">
+          <i class="fa-solid fa-cubes-stacked"></i>
         </button>
         <button class="bottom-tab" data-view="settings" title="Configurações">
           <i class="fa-solid fa-gear"></i>

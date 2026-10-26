@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 import {
-  hasTauri, notesApi, mdApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
+  hasTauri, notesApi, gitApi, mdApi, openFileDialogApi, openDirectoryDialogApi, saveFileDialogApi, readTextFileApi, writeFileApi, exportNoteImagesApi, saveSettingsApi,
 } from "../api.js";
 import { updateSettingsUI } from "./settings.js";
 import { registerApp } from "../appLifecycle.js";
@@ -40,6 +40,9 @@ import { exportNotePdf } from "./notePdf.js";
 import { initEditor, loadEditor, runCommand, getSelectionState, focusEditorEnd } from "./noteEditor.js";
 import { enterDesktopMode, exitDesktopMode, minimizeWindow, toggleMaximize } from "./windowMode.js";
 import { openFind, closeFind, isFindOpen } from "./noteFind.js";
+import { createGitPanel } from "./noteGit.js";
+import { createDiffView } from "./diffView.js";
+import { newVaultDialog } from "./gitDialogs.js";
 
 // "Quick Notes" modeled on macOS Notes: folders, grouped list, and a rich editor.
 // The same DOM is used in tray mode (stacked navigation) and desktop mode (3 columns).
@@ -64,6 +67,7 @@ const popoverEl = document.getElementById("nt-format-popover");
 const menuEl = document.getElementById("nt-menu");
 const toastEl = document.getElementById("nt-toast");
 const graphEl = document.getElementById("nt-graph");
+const diffEl = document.getElementById("nt-diff");
 
 let saveTimer = null;
 let listRenderQueued = false;
@@ -82,6 +86,9 @@ let graphLoading = null;
 let graphReturnScope = "all"; // escopo de onde se abriu o grafo
 let graphShowLocal = null; // modo pedido na próxima abertura (null = o último usado)
 let draggedFolderId = null; // pasta sendo arrastada na barra lateral
+let gitPanel = null; // noteGit.js (painel Git da barra lateral, modo cofre)
+let diffView = null; // diffView.js (ocupa a lista + o editor enquanto aberto)
+let diffOpen = false;
 const navBack = []; // Alt+← / Alt+→ entre notas abertas por link
 const navForward = [];
 
@@ -362,6 +369,7 @@ function ensureGraph() {
 /** Grafo (modo Zettelkasten); `local` = centrado na nota aberta. */
 function openGraph({ local = null } = {}) {
   if (!zk()) return;
+  closeDiff();
   if (ui.scope !== "graph") {
     graphReturnScope = ui.scope;
     discardIfEmpty(ui.selectedId);
@@ -468,6 +476,7 @@ function discardIfEmpty(id) {
 // ---------- Actions ----------
 
 function selectNote(id, { focus = false, openEditor = true } = {}) {
+  closeDiff();
   if (ui.selectedId !== id && ui.selectedId !== null) {
     discardIfEmpty(ui.selectedId);
     flushNotesSave();
@@ -479,6 +488,7 @@ function selectNote(id, { focus = false, openEditor = true } = {}) {
 }
 
 function setScope(scope) {
+  closeDiff();
   ui.scope = scope;
   ui.query = "";
   searchInputs.forEach((i) => (i.value = ""));
@@ -680,6 +690,30 @@ async function importMarkdownFolder(parentId = scopeParentFolder()) {
   }
 }
 
+/**
+ * Grava a nota (conteúdo já carregado) como Markdown em `path`; as imagens guardadas são
+ * copiadas para "<nome>.assets/" ao lado. Devolve quantas imagens foram copiadas.
+ */
+async function writeNoteMarkdown(note, path) {
+  const { dir, sep, stem } = splitPath(path);
+  const assets = `${stem}.assets`;
+  const names = new Set();
+  const md =
+    propsToYaml(note.props, { created: note.created_at }) +
+    htmlToMarkdown(note.content, {
+      imageSrc: (src) => {
+        const name = localImageName(src);
+        if (!name) return src;
+        names.add(name);
+        return `${assets}/${name}`;
+      },
+      linkTitle: (a) => (a.dataset.note ? linkedTitle(Number(a.dataset.note)) : null) || "",
+    });
+  if (names.size) await exportNoteImagesApi([...names], `${dir}${sep}${assets}`);
+  await writeFileApi(path, { text: md });
+  return names.size;
+}
+
 async function exportMarkdown(id) {
   const note = findNote(id);
   if (!note) return;
@@ -696,25 +730,9 @@ async function exportMarkdown(id) {
   });
   if (!path) return;
 
-  // Stored images are copied to "<name>.assets/" next to the .md file.
-  const { dir, sep, stem } = splitPath(path);
-  const assets = `${stem}.assets`;
-  const names = new Set();
-  const md =
-    propsToYaml(note.props, { created: note.created_at }) +
-    htmlToMarkdown(note.content, {
-      imageSrc: (src) => {
-        const name = localImageName(src);
-        if (!name) return src;
-        names.add(name);
-        return `${assets}/${name}`;
-      },
-      linkTitle: (a) => (a.dataset.note ? linkedTitle(Number(a.dataset.note)) : null) || "",
-    });
   try {
-    if (names.size) await exportNoteImagesApi([...names], `${dir}${sep}${assets}`);
-    await writeFileApi(path, { text: md });
-    toast(names.size ? `Exportada com ${names.size} imagem(ns).` : "Nota exportada.");
+    const images = await writeNoteMarkdown(note, path);
+    toast(images ? `Exportada com ${images} imagem(ns).` : "Nota exportada.");
   } catch (e) {
     console.error("markdown export failed", e);
     toast(`Falha ao exportar: ${e}`);
@@ -810,6 +828,7 @@ function applyVaultDiff({ changed, removed, folders }, announce) {
   }
   titleIndex = null;
   notesChanged();
+  gitPanel?.refreshSoon(200);
   if (ui.selectedId !== null && !findNote(ui.selectedId)) ui.selectedId = null;
   renderNotes();
   if (reloadOpen || ui.selectedId === null) loadSelectedIntoEditor();
@@ -1414,7 +1433,9 @@ function renderChrome() {
   if (ui.pane === "graph" && ui.scope !== "graph") ui.pane = "list";
   if (!state.desktopMode && ui.scope === "graph") ui.pane = "graph";
   appEl.dataset.pane = ui.pane;
-  appEl.dataset.view = ui.scope === "graph" ? "graph" : "";
+  if (diffOpen && (!state.desktopMode || !isVault())) closeDiff({ render: false });
+  appEl.dataset.view = ui.scope === "graph" ? "graph" : diffOpen ? "diff" : "";
+  appEl.classList.toggle("vault", isVault());
   appEl.classList.toggle("zettel", zk());
   appEl.classList.toggle("sidebar-hidden", ui.sidebarHidden);
   const editing = state.activeMainView === "notes" && !state.desktopMode && ui.pane === "editor";
@@ -1446,6 +1467,70 @@ function renderStorageLabel() {
   if (refresh) refresh.hidden = !isVault();
 }
 
+// ---------- Controle de versão (git) do cofre ----------
+
+function vaultNoteByRel(rel) {
+  return state.notes.find((n) => n.rel === rel && !n.deleted_at) || null;
+}
+
+function openDiff(spec) {
+  if (!diffView) return;
+  if (ui.scope === "graph") ui.scope = graphReturnScope;
+  discardIfEmpty(ui.selectedId);
+  flushNotesSave();
+  closePopover();
+  closeMenu();
+  diffOpen = true;
+  renderChrome();
+  diffView.open(spec).then(() => gitPanel?.selectionChanged());
+  gitPanel?.selectionChanged();
+}
+
+function closeDiff({ render = true } = {}) {
+  if (!diffOpen) return;
+  diffOpen = false;
+  diffView?.reset();
+  if (render) {
+    renderChrome();
+    gitPanel?.selectionChanged();
+  }
+}
+
+function initGit() {
+  diffView = createDiffView(diffEl, {
+    toast,
+    beforeWrite: async () => {
+      discardIfEmpty(ui.selectedId);
+      flushNotesSave();
+      await whenSaved();
+    },
+    afterWrite: async () => {
+      await syncVault();
+      await gitPanel?.refresh();
+    },
+    close: () => closeDiff(),
+  });
+  gitPanel = createGitPanel(appEl, {
+    toast,
+    showMenu,
+    flush: async () => {
+      discardIfEmpty(ui.selectedId);
+      flushNotesSave();
+      await whenSaved();
+    },
+    sync: () => syncVault(),
+    noteByRel: vaultNoteByRel,
+    openNote: (note) => {
+      closeDiff();
+      revealNote(note.id);
+    },
+    openDiff,
+    closeDiff: () => closeDiff(),
+    refreshDiff: () => diffOpen && diffView.refresh(),
+    diffSpec: () => (diffOpen ? diffView.spec : null),
+  });
+}
+
 // ---------- Troca rápida de cofre (barra lateral) ----------
 
 let storageSwitching = false;
@@ -1468,6 +1553,21 @@ async function openOtherVault() {
   if (dir) changeStorage("vault", dir);
 }
 
+/** Cofre novo: pasta criada já com repositório git (e commit inicial), e aberta em seguida. */
+export async function createVault() {
+  if (!hasTauri) return toast("Disponível apenas no aplicativo desktop.");
+  const answer = await newVaultDialog();
+  if (!answer) return;
+  try {
+    const res = await gitApi.createVault(answer.parent, answer.name);
+    await changeStorage("vault", res.path);
+    if (!res.git) toast(res.git_error ? `Cofre criado, mas sem git: ${res.git_error}` : "Cofre criado. Instale o Git para ter controle de versão.");
+    else if (!res.committed) toast("Cofre criado com git. Configure seu nome/e-mail no primeiro commit.");
+  } catch (e) {
+    toast(`Não foi possível criar o cofre: ${e}`);
+  }
+}
+
 function forgetVault(path) {
   state.settings.vaults = knownVaults(state.settings).filter((p) => !sameVaultPath(p, path));
   if (state.settings.vault_path && sameVaultPath(state.settings.vault_path, path)) state.settings.vault_path = "";
@@ -1487,7 +1587,8 @@ function showStorageMenu(btn) {
     { label: "Banco local (No Meu PC)", icon: current ? "fa-solid fa-hard-drive" : "fa-solid fa-check", run: () => changeStorage("sqlite") },
     ...vaults.map((p, i) => ({ label: labels[i], icon: isCurrent(p) ? "fa-solid fa-check" : "fa-regular fa-folder", run: () => changeStorage("vault", p) })),
     "sep",
-    { label: "Abrir outro cofre…", icon: "fa-solid fa-folder-plus", run: openOtherVault },
+    { label: "Criar novo cofre…", icon: "fa-solid fa-folder-plus", run: createVault },
+    { label: "Abrir outro cofre…", icon: "fa-regular fa-folder-open", run: openOtherVault },
   ];
   const inactive = vaults.map((p, i) => [p, labels[i]]).filter(([p]) => !isCurrent(p));
   if (inactive.length) {
@@ -1870,6 +1971,8 @@ function handleGlobalKeydown(e) {
       return renderNotes();
     }
     if (!state.desktopMode && ui.pane === "editor") return ACTIONS["show-list"]();
+    // No resultado de um merge o Esc fica com o editor (não perde o que foi editado).
+    if (diffOpen) return document.activeElement?.closest?.("#nt-diff .ce") ? undefined : closeDiff();
     if (ui.scope === "graph" && !graphEl.contains(document.activeElement)) {
       ui.scope = graphReturnScope;
       if (!state.desktopMode) ui.pane = "folders";
@@ -1920,6 +2023,7 @@ export function initNotes() {
   });
   window.addEventListener("focus", () => state.activeMainView === "notes" && syncVault());
   startVaultPolling();
+  initGit();
   initEditor({ onInput: handleEditorInput, onSelection: handleSelectionState });
   propsPanel = createPropsPanel(document.getElementById("nt-props"), {
     editor: document.getElementById("nt-editor"),
@@ -2045,3 +2149,73 @@ export function initNotes() {
 
   loadSelectedIntoEditor();
 }
+
+// ---------- CLI (js/cli/notesCli.js) ----------
+
+/** Pasta pelo caminho "a/b" (criada se faltar); "" ou "Notas" = 0. */
+function folderByPath(path, { create = true } = {}) {
+  const names = String(path || "").split(/[\\/]/).map((x) => x.trim()).filter(Boolean);
+  if (!names.length || (names.length === 1 && names[0].toLowerCase() === DEFAULT_FOLDER.name.toLowerCase())) return 0;
+  let created = false;
+  let missing = false;
+  const make = (name, parent) => {
+    if (!create) {
+      missing = true;
+      return { id: -1 };
+    }
+    let id = Date.now();
+    while (allFolders().some((f) => f.id === id)) id++;
+    const folder = { id, name: name.slice(0, 60), parent_id: parent };
+    insertFolderSorted(state.folders, folder);
+    created = true;
+    return folder;
+  };
+  const id = ensureFolderPath(state.folders, 0, names, make);
+  if (missing) return null;
+  if (created) {
+    saveFolders();
+    renderNotes();
+  }
+  return id;
+}
+
+/** Operações das Notas usadas pela CLI `devsuite`, sobre o estado vivo desta janela. */
+export const notesHost = {
+  findNote,
+  titleOf,
+  previewOf,
+  folderLabel,
+  folderByPath,
+  getIndex,
+  markdownNote,
+  writeNoteMarkdown,
+  deleteNote,
+  restoreNote,
+  moveNote,
+  /** Nova nota já com conteúdo; grava e redesenha. */
+  create(html, folderId, props = null, created = null) {
+    const id = makeNote(html, folderId, props, created);
+    flushNotesSave();
+    notesChanged();
+    renderNotes();
+    return findNote(id);
+  },
+  /** O conteúdo/propriedades mudaram fora do editor: grava e atualiza a interface. */
+  changed(note) {
+    note.dirty = true;
+    note.updated_at = Date.now();
+    note.links = noteLinks(note.content);
+    ensureZid(note);
+    flushNotesSave();
+    notesChanged();
+    if (ui.selectedId === note.id) loadSelectedIntoEditor();
+    renderNotes();
+  },
+  setPinned(note, pinned) {
+    if (!!note.pinned !== pinned) togglePin(note.id);
+  },
+  async flush() {
+    flushNotesSave();
+    await whenSaved();
+  },
+};

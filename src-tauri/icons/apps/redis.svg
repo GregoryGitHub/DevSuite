@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><!-- Glifo próprio: camadas empilhadas (app Redis) -->
+<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f87171"/><stop offset="1" stop-color="#b91c1c"/></linearGradient></defs>
+<rect x="48" y="48" width="928" height="928" rx="208" fill="url(#g)"/>
+<path fill="#fff" fill-opacity="0.55" d="M512 560 L768 680 L512 800 L256 680 Z"/>
+<path fill="#fff" fill-opacity="0.8" d="M512 420 L768 540 L512 660 L256 540 Z"/>
+<path fill="#fff" d="M512 280 L768 400 L512 520 L256 400 Z"/>
+</svg>

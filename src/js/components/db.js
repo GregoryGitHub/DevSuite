@@ -14,15 +14,21 @@ import {
   isMongo,
   affectedText,
   buildConnectionString,
+  newSavedQuery,
+  queriesFor,
+  queryFolders,
+  normalizeFolder,
 } from "../utils/dbModel.js";
 import { dialectFor } from "../utils/sqlDialect.js";
-import { saveDbDataApi, loadDbDataApi, dbApi } from "../api.js";
+import { saveDbDataApi, loadDbDataApi, dbApi, readTextFileApi, openFileDialogApi } from "../api.js";
 import { registerApp } from "../appLifecycle.js";
 import { createExplorer } from "./dbExplorer.js";
 import { createTableTab } from "./dbTableTab.js";
 import { createMongoTab } from "./dbMongoTab.js";
 import { createConsoleTab, createDdlTab } from "./dbConsole.js";
-import { connectionDialog, dbConfirm, isDbModalOpen, closeDbModal, sqlPreviewDialog } from "./dbDialogs.js";
+import { createPlanTab } from "./dbPlan.js";
+import { createPerfTab, PERF_SECTIONS } from "./dbPerf.js";
+import { connectionDialog, dbConfirm, isDbModalOpen, closeDbModal, sqlPreviewDialog, saveQueryDialog, dbPrompt } from "./dbDialogs.js";
 import { attachWordComplete } from "./sqlComplete.js";
 import { tableDesigner, ddlActionDialog, quickSchemaAction, databaseScriptDialog } from "./dbSchema.js";
 import { renameObjectSql, dropObjectSql, truncateSql, renameColumnRefs, dropColumn } from "../utils/sqlDdl.js";
@@ -286,16 +292,22 @@ function duplicateConnection(c) {
 async function deleteConnection(c) {
   const ok = await dbConfirm({
     title: "Excluir conexão?",
-    message: `"${connLabel(c)}" e seus consoles salvos serão removidos. A senha/token é apagada do cofre do sistema.`,
+    message: `"${connLabel(c)}", seus consoles e suas consultas salvas serão removidos. A senha/token é apagada do cofre do sistema.`,
     confirmLabel: "Excluir",
     danger: true,
   });
   if (!ok) return;
+  await removeConnection(c);
+}
+
+/** Remove a conexão (abas, consoles, sessões e segredos), sem perguntar. */
+async function removeConnection(c) {
   for (const t of data().ui.tabs.filter((t) => t.conn_id === c.id)) await closeTab(t.id, { force: true });
   await disconnect(c);
   await dbApi.forgetSecrets(c.id);
   data().connections = data().connections.filter((x) => x.id !== c.id);
   data().consoles = data().consoles.filter((x) => x.conn_id !== c.id);
+  data().queries = data().queries.filter((x) => x.conn_id !== c.id);
   data().ui.expanded = data().ui.expanded.filter((k) => !k.startsWith(`c:${c.id}`));
   explorer?.forgetConnection(c.id);
   saveNow();
@@ -389,6 +401,7 @@ function appendLog(e) {
         showMenu(ev.clientX, ev.clientY, [
           { label: "Copiar SQL", icon: "fa-regular fa-copy", run: () => copy(e.sql, "SQL copiado") },
           e.conn ? { label: "Abrir no console", icon: "fa-solid fa-terminal", run: () => openConsole(conn(e.conn.id) || e.conn, e.database, e.sql) } : null,
+          e.conn && conn(e.conn.id) ? { label: "Salvar como consulta…", icon: "fa-regular fa-bookmark", run: () => createQuery({ conn_id: e.conn.id, database: e.database, sql: e.sql }) } : null,
         ]);
       },
       ondblclick: () =>
@@ -415,7 +428,17 @@ function tabTitle(t) {
   const where = c ? connLabel(c) : "?";
   if (t.type === "console") {
     const doc = data().consoles.find((x) => x.id === t.console_id);
-    return { title: doc?.name || "console", where: `${where}${doc?.database ? `/${doc.database}` : ""}`, icon: "fa-solid fa-terminal" };
+    const q = doc?.saved_id ? savedQuery(doc.saved_id) : null;
+    return {
+      title: `${doc?.name || "console"}${q && q.sql !== doc.sql ? " *" : ""}`,
+      where: `${where}${doc?.database ? `/${doc.database}` : ""}`,
+      icon: q ? "fa-solid fa-bookmark" : "fa-solid fa-terminal",
+    };
+  }
+  if (t.type === "plan") return { title: t.name || "Plano", where: `${where}${t.database ? `/${t.database}` : ""}`, icon: "fa-solid fa-diagram-project" };
+  if (t.type === "perf") {
+    const s = PERF_SECTIONS.find((x) => x.id === t.options?.section) || PERF_SECTIONS[0];
+    return { title: `Desempenho: ${s.label}`, where: `${where}${t.database ? `/${t.database}` : ""}`, icon: "fa-solid fa-gauge-high" };
   }
   if (t.type === "ddl" && t.kind === "database") return { title: `DDL ${t.name}`, where, icon: "fa-solid fa-scroll" };
   if (t.type === "ddl") return { title: t.name, where, icon: "fa-solid fa-code" };
@@ -476,6 +499,13 @@ function renameConsole(t) {
   const done = (save) => {
     if (save && input.value.trim()) {
       doc.name = input.value.trim();
+      // Console de uma consulta salva: renomear a aba renomeia a consulta.
+      const q = doc.saved_id ? savedQuery(doc.saved_id) : null;
+      if (q) {
+        q.name = doc.name;
+        q.updated_at = Date.now();
+        explorer?.render();
+      }
       saveDataSoon();
     }
     renderTabs();
@@ -507,10 +537,18 @@ const tabCtx = {
   openTable: (ref) => openTable(ref),
   openDdl: (ref) => openDdl(ref),
   openConsole: (c, database, sql) => openConsole(c, database, sql),
+  openPlan: (p) => openPlan(p),
+  openPerf: (p) => openPerf(p),
+  serverInfo: (c) => (c ? status(c.id).info || null : null),
+  readFile: (path) => readTextFileApi(path),
   databases,
   completions,
   requireLogin,
   attachColumnComplete: attachWordComplete,
+  savedQuery: (id) => savedQuery(id),
+  saveQuery: saveConsoleQuery,
+  editQuery: (q) => editQuery(q),
+  rememberParams,
   onTitleChange: (t, flags) => {
     tabFlags.set(t.id, { ...(tabFlags.get(t.id) || {}), ...flags });
     renderTabs();
@@ -522,6 +560,8 @@ function controllerFor(t) {
   if (ctl) return ctl;
   if (t.type === "table") ctl = isMongo(conn(t.conn_id)) ? createMongoTab(tabCtx, t) : createTableTab(tabCtx, t);
   else if (t.type === "ddl") ctl = createDdlTab(tabCtx, t);
+  else if (t.type === "plan") ctl = createPlanTab(tabCtx, t, (x) => planXml.get(x.id));
+  else if (t.type === "perf") ctl = createPerfTab(tabCtx, t);
   else {
     const doc = data().consoles.find((x) => x.id === t.console_id);
     if (!doc) return null;
@@ -599,15 +639,231 @@ function openDdl({ conn: c, database, schema, name, kind, options = null }) {
   addTab(newTab({ type: "ddl", conn_id: c.id, database, schema, name, kind, options }));
 }
 
-function openConsole(c, database, sql = "") {
+// XML dos planos abertos em aba (não vai para o databases.json: pode ter vários MB).
+const planXml = new Map();
+
+/** Aba com um plano de execução (do console, do cache, do Query Store ou de um .sqlplan). */
+function openPlan({ conn: c, database = "", xml = null, name = "Plano", path = "" }) {
+  if (!c) return;
+  const t = newTab({ type: "plan", conn_id: c.id, database, name, options: path ? { path } : null });
+  if (xml) planXml.set(t.id, xml);
+  addTab(t);
+}
+
+async function openPlanFile(c, database = "") {
+  const path = await openFileDialogApi({ title: "Abrir plano de execução", filters: [{ name: "Plano de execução", extensions: ["sqlplan", "xml"] }] });
+  if (!path) return;
+  openPlan({ conn: c, database, name: String(path).split(/[\\/]/).pop(), path });
+}
+
+/** Aba Desempenho do banco (uma por conexão + banco); `section`/filtros reaproveitam a aberta. */
+function openPerf({ conn: c, database = "", section = "top", ...patch }) {
+  if (!c || isMongo(c)) return;
+  if (!state.desktopMode) enterDesktopMode();
+  const db = database || c.database || "";
+  const existing = data().ui.tabs.find((t) => t.type === "perf" && t.conn_id === c.id && t.database === db);
+  if (existing) {
+    showTab(existing.id);
+    const ctl = controllers.get(existing.id);
+    if (ctl) ctl.navigate(section, patch);
+    else Object.assign((existing.options ||= {}), { section, ...patch });
+    return;
+  }
+  addTab(newTab({ type: "perf", conn_id: c.id, database: db, options: { section, ...patch } }));
+}
+
+function openConsole(c, database, sql = "", extra = null) {
   if (!c) return toast("Crie uma conexão primeiro");
   const doc = newConsole(c, database);
   const n = data().consoles.filter((x) => x.conn_id === c.id).length;
   doc.name = n ? `console ${n + 1}` : "console";
   doc.sql = sql;
+  if (extra) Object.assign(doc, extra);
   data().consoles.push(doc);
   addTab(newTab({ type: "console", conn_id: c.id, database: doc.database, console_id: doc.id }));
 }
+
+// ---------- Consultas salvas ----------
+
+const savedQuery = (id) => data().queries.find((q) => q.id === id) || null;
+const sameName = (a, b) => a.trim().localeCompare(b.trim(), "pt-BR", { sensitivity: "base" }) === 0;
+
+/** Banco "efetivo" de um console/consulta: o escolhido, o padrão da conexão ou o do login. */
+function effectiveDatabase(c, database) {
+  return database || c.database || status(c.id).info?.database || "";
+}
+
+function queryDialog(title, query, selfId = null) {
+  return saveQueryDialog({
+    title,
+    query,
+    connections: data().connections,
+    folders: (connId, database) => queryFolders(data().queries.filter((q) => q.conn_id === connId && q.database === database)),
+    databases: async (connId) => {
+      const c = conn(connId);
+      return c && status(c.id).state === "connected" ? databases(c) : [];
+    },
+    exists: (v) =>
+      data().queries.some((q) => q.id !== selfId && q.conn_id === v.conn_id && q.database === v.database && q.folder === normalizeFolder(v.folder) && sameName(q.name, v.name)),
+  });
+}
+
+/** Consoles abertos ligados a uma consulta (para atualizar título/estado). */
+function consolesOf(queryId) {
+  return data().consoles.filter((d) => d.saved_id === queryId);
+}
+
+function refreshQueryViews(queryId = null) {
+  for (const t of data().ui.tabs) {
+    if (t.type !== "console") continue;
+    const doc = data().consoles.find((d) => d.id === t.console_id);
+    if (queryId && doc?.saved_id !== queryId) continue;
+    controllers.get(t.id)?.refresh();
+  }
+  explorer?.render();
+  renderTabs();
+}
+
+/** Nova consulta salva (do log, do Explorer ou de um console). Devolve a consulta ou null. */
+async function createQuery({ conn_id, database = "", sql = "", folder = "", name = "" }) {
+  const c = conn(conn_id);
+  if (!c) return null;
+  const v = await queryDialog("Salvar consulta", { name, folder, description: "", conn_id, database: effectiveDatabase(c, database) });
+  if (!v) return null;
+  const q = newSavedQuery({ ...v, sql });
+  data().queries.push(q);
+  saveNow();
+  explorer?.revealQuery(q);
+  toast(`Consulta "${q.name}" salva`);
+  return q;
+}
+
+/** Ctrl+S no console: atualiza a consulta ligada ou cria uma nova e liga o console a ela. */
+async function saveConsoleQuery(doc, { asNew = false, text }) {
+  const linked = doc.saved_id ? savedQuery(doc.saved_id) : null;
+  if (linked && !asNew) {
+    linked.sql = text;
+    linked.updated_at = Date.now();
+    saveNow();
+    refreshQueryViews(linked.id);
+    return toast(`"${linked.name}" salva`);
+  }
+  const q = await createQuery({ conn_id: doc.conn_id, database: doc.database, sql: text, folder: linked?.folder || "", name: linked ? `${linked.name} (cópia)` : "" });
+  if (!q) return;
+  // O console passa a ser da consulta só se ela tem o texto inteiro dele.
+  if (text === doc.sql) {
+    doc.saved_id = q.id;
+    doc.name = q.name;
+    q.params = { ...doc.params, ...q.params };
+  }
+  saveNow();
+  refreshQueryViews();
+}
+
+async function editQuery(q) {
+  const v = await queryDialog(`Consulta — ${q.name}`, { name: q.name, folder: q.folder, description: q.description, conn_id: q.conn_id, database: q.database }, q.id);
+  if (!v) return;
+  const moved = v.conn_id !== q.conn_id || v.database !== q.database;
+  Object.assign(q, { name: v.name, folder: normalizeFolder(v.folder), description: v.description, conn_id: v.conn_id, database: v.database, updated_at: Date.now() });
+  // Consoles abertos continuam na conexão deles; só o nome acompanha.
+  for (const d of consolesOf(q.id)) {
+    if (moved) d.saved_id = "";
+    else d.name = q.name;
+  }
+  saveNow();
+  refreshQueryViews();
+  if (moved) explorer?.revealQuery(q);
+}
+
+function duplicateQuery(q) {
+  const copyQ = newSavedQuery({ ...structuredClone(q), id: undefined, name: `${q.name} (cópia)` });
+  data().queries.push(copyQ);
+  saveNow();
+  explorer?.revealQuery(copyQ);
+}
+
+function deleteQueries(list, label) {
+  if (!list.length) return;
+  const ids = new Set(list.map((q) => q.id));
+  const before = data().queries.slice();
+  const links = data().consoles.filter((d) => ids.has(d.saved_id)).map((d) => [d, d.saved_id]);
+  data().queries = data().queries.filter((q) => !ids.has(q.id));
+  for (const [d] of links) d.saved_id = "";
+  saveNow();
+  refreshQueryViews();
+  toast(label, {
+    label: "Desfazer",
+    run: () => {
+      data().queries = before;
+      for (const [d, id] of links) d.saved_id = id;
+      saveNow();
+      refreshQueryViews();
+    },
+  });
+}
+
+/** Pasta das consultas (Explorer): renomear troca o prefixo de todas as consultas abaixo dela. */
+async function renameQueryFolder({ connId, database, isDefault, folder }) {
+  const name = folder.split("/").pop();
+  const v = (await dbPrompt({ title: "Renomear pasta", label: "Nome", value: name }))?.trim();
+  if (!v || v === name || v.includes("/")) return;
+  const parent = folder.split("/").slice(0, -1).join("/");
+  const next = normalizeFolder(parent ? `${parent}/${v}` : v);
+  for (const q of queriesFor(data(), connId, database, isDefault)) {
+    if (q.folder === folder) q.folder = next;
+    else if (q.folder.startsWith(`${folder}/`)) q.folder = next + q.folder.slice(folder.length);
+  }
+  saveNow();
+  explorer?.render();
+}
+
+/** Abre a consulta num console ligado a ela (reaproveita o console já aberto); `run` executa. */
+function openSavedQuery(q, { run = false } = {}) {
+  const c = conn(q.conn_id);
+  if (!c) return;
+  if (!state.desktopMode) enterDesktopMode();
+  const doc = data().consoles.find((d) => d.saved_id === q.id && data().ui.tabs.some((t) => t.console_id === d.id));
+  if (doc) {
+    // autorun: o console executa ao ser ativado (showTab chama activate()).
+    if (run) doc.autorun = true;
+    return showTab(data().ui.tabs.find((x) => x.console_id === doc.id).id);
+  }
+  openConsole(c, q.database, q.sql, { saved_id: q.id, name: q.name, params: structuredClone(q.params), autorun: run });
+}
+
+/** Lembra os últimos valores dos parâmetros no console e na consulta ligada a ele. */
+function rememberParams(doc, values) {
+  const toSaved = (v) => ({ type: v.type, last: String(v.value ?? "") });
+  for (const [name, v] of Object.entries(values)) doc.params[name] = toSaved(v);
+  const q = doc.saved_id ? savedQuery(doc.saved_id) : null;
+  if (q) for (const [name, v] of Object.entries(values)) q.params[name] = toSaved(v);
+  saveDataSoon();
+}
+
+/** Arrastar no Explorer: leva a consulta para outra pasta/banco. */
+function moveQuery(q, { connId, database, folder }) {
+  if (q.conn_id === connId && q.database === database && q.folder === folder) return;
+  if (q.conn_id !== connId) for (const d of consolesOf(q.id)) d.saved_id = "";
+  Object.assign(q, { conn_id: connId, database, folder: normalizeFolder(folder), updated_at: Date.now() });
+  saveNow();
+  refreshQueryViews();
+}
+
+const queryActions = {
+  list: (connId, database, isDefault) => queriesFor(data(), connId, database, isDefault),
+  get: savedQuery,
+  open: openSavedQuery,
+  create: createQuery,
+  edit: editQuery,
+  duplicate: duplicateQuery,
+  move: moveQuery,
+  remove: (q) => deleteQueries([q], `Consulta "${q.name}" excluída`),
+  removeFolder: ({ connId, database, isDefault, folder }) => {
+    const list = queriesFor(data(), connId, database, isDefault).filter((q) => !folder || q.folder === folder || q.folder.startsWith(`${folder}/`));
+    deleteQueries(list, `${list.length} consulta(s) excluída(s)`);
+  },
+  renameFolder: renameQueryFolder,
+};
 
 async function closeTab(id, { force = false } = {}) {
   const tabs = data().ui.tabs;
@@ -619,6 +875,7 @@ async function closeTab(id, { force = false } = {}) {
   controllers.delete(id);
   tabFlags.delete(id);
   const [t] = tabs.splice(i, 1);
+  planXml.delete(t.id);
   // Fechar o console descarta o rascunho; o que foi executado continua no log de consultas.
   if (t.type === "console") data().consoles = data().consoles.filter((x) => x.id !== t.console_id);
   if (data().ui.active_tab === id) {
@@ -658,6 +915,7 @@ function renderEmpty() {
 const SHORTCUTS_HTML = [
   ["Ctrl+Enter", "executar comando / enviar alterações do grid"],
   ["Ctrl+Shift+Q", "novo console"],
+  ["Ctrl+L / Ctrl+Shift+L", "plano estimado / executar com plano real e IO/TIME"],
   ["F2 / Enter", "editar célula · Shift+Enter: editor de valor"],
   ["Ctrl+C / Ctrl+V", "copiar/colar (compatível com Excel)"],
   ["Alt+Insert / Ctrl+D", "nova linha / duplicar linha"],
@@ -1016,7 +1274,12 @@ export function setDbData(raw) {
       newConnection: newConnectionDialog,
       signOut,
       scriptMenu,
+      perf: {
+        open: (c, database, section, patch = {}) => openPerf({ conn: c, database, section, ...patch }),
+        openPlanFile: (c, database) => openPlanFile(c, database),
+      },
       schema: schemaActions,
+      queries: queryActions,
       dialect: () => dialect(),
       showMenu,
       copy,
@@ -1077,3 +1340,27 @@ export function initDb() {
       [...tabFlags.values()].some((f) => f.running) ? "Há consultas em andamento no Banco. Espere terminar ou cancele antes de mover." : null,
   });
 }
+
+// ---------- CLI (js/cli/dbCli.js) ----------
+
+/** Operações do Banco usadas pela CLI `devsuite`, sobre o databases.json vivo desta janela. */
+export const dbHost = {
+  async addConnection(c, password) {
+    data().connections.push(c);
+    if (password) await dbApi.setPassword(c.id, password);
+    saveNow();
+    renderAll();
+  },
+  removeConnection,
+  /** Nova consulta salva (já normalizada com newSavedQuery). */
+  addQuery(q) {
+    data().queries.push(q);
+    saveNow();
+    explorer?.render();
+  },
+  /** Últimos valores dos parâmetros usados (como na interface). */
+  rememberQueryParams(q, values) {
+    for (const [name, v] of Object.entries(values)) q.params[name] = { type: v.type, last: String(v.value ?? "") };
+    saveDataSoon();
+  },
+};

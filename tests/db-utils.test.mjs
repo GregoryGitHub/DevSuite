@@ -103,6 +103,17 @@ assert.equal(toSqlInList(mssql, { name: "id", kind: "int" }, [1, 2, 1]), "[id] I
 // --- dbModel
 const d = normalizeDbData({ connections: [{ id: "c1", host: "x", auth: { kind: "entra" } }], ui: { tabs: [{ type: "table", conn_id: "c1" }, { type: "table", conn_id: "zz" }] } });
 assert.equal(d.ui.tabs.length, 1);
+{
+  // abas de plano (só a de arquivo volta) e de desempenho; console com IO/TIME
+  const t = normalizeDbData({
+    connections: [{ id: "c1", host: "x", auth: { kind: "sql" } }],
+    consoles: [{ id: "k1", conn_id: "c1", stats: true }, { id: "k2", conn_id: "c1" }],
+    ui: { tabs: [{ type: "plan", conn_id: "c1" }, { type: "plan", conn_id: "c1", options: { path: "C:/x.sqlplan" } }, { type: "perf", conn_id: "c1", database: "db", options: { section: "waits" } }, { type: "bogus", conn_id: "c1" }] },
+  });
+  assert.deepEqual(t.ui.tabs.map((x) => x.type), ["plan", "perf"]);
+  assert.equal(t.ui.tabs[1].options.section, "waits");
+  assert.deepEqual(t.consoles.map((c) => c.stats), [true, false]);
+}
 assert.equal(d.connections[0].auth.kind, "entra");
 assert.equal(connConfig(newConnection({ host: "h", instance: "SQLEXPRESS", port: null })).port, null);
 
@@ -244,6 +255,54 @@ assert.equal(r.patch.database, "d");
   m.columns[0].nullable = true;
   assert.ok(ddl.validate(m).some((e) => /chave primária/.test(e)));
   assert.equal(ddl.renameObjectSql(d, { schema: "dbo", name: "a'b" }, "c"), "EXEC sp_rename N'[dbo].[a''b]', N'c'");
+}
+
+// --- Parâmetros (:nome / {{nome}}) e consultas salvas
+{
+  const { findParams, bindParams, inferType, ParamError } = await import(base + "sqlParams.js");
+  const { queriesFor, queryFolders, normalizeFolder } = await import(base + "dbModel.js");
+  const opts = { lang: "sql", dialect: mssql };
+  assert.deepEqual(findParams("SELECT * FROM t WHERE id = :id AND n = :nome OR id = :id"), ["id", "nome"]);
+  // strings, comentários, identificadores, :: e SQLCMD não contam
+  assert.deepEqual(findParams("SELECT ':x', [a:b], \"c:d\" -- :y\n/* :z */ FROM t WHERE a::int = 1"), []);
+  assert.deepEqual(findParams(":setvar x 1\nSELECT 1"), []);
+  assert.deepEqual(findParams("SELECT 'it''s :no', :yes"), ["yes"]);
+  assert.deepEqual(findParams("WHERE nome LIKE '%{{q}}%' AND id = {{ id }}"), ["q", "id"]);
+  assert.deepEqual(findParams("GRANT SELECT ON SCHEMA::dbo TO x"), []);
+  assert.equal(bindParams("WHERE id = :id AND n = :n", { id: { type: "auto", value: "42" }, n: { type: "auto", value: "O'Neil" } }, opts), "WHERE id = 42 AND n = N'O''Neil'");
+  assert.equal(bindParams("LIKE '%{{q}}%'", { q: { type: "text", value: "a'b" } }, opts), "LIKE '%a''b%'");
+  assert.equal(bindParams("= :d", { d: { type: "date", value: "2026-01-02" } }, opts), "= '2026-01-02'");
+  assert.equal(bindParams("= :b", { b: { type: "bool", value: "true" } }, opts), "= 1");
+  assert.equal(bindParams("= :x", { x: { type: "null", value: "" } }, opts), "= NULL");
+  assert.equal(bindParams("IN (:ids)", { ids: { type: "raw", value: "1, 2" } }, opts), "IN (1, 2)");
+  assert.equal(bindParams("= :n", { n: { type: "text", value: "12" } }, opts), "= N'12'");
+  assert.throws(() => bindParams("= :n", { n: { type: "number", value: "1; DROP" } }, opts), ParamError);
+  assert.throws(() => bindParams("= :n", {}, opts), ParamError);
+  assert.equal(inferType("-3.5"), "number");
+  assert.equal(inferType("abc"), "text");
+  // MongoDB: só {{ }}; literais do mongosh e escape dentro de strings
+  const mo = { lang: "mongo" };
+  assert.deepEqual(findParams("db.c.find({ a: :x, b: {{y}} }) // {{z}}", "mongo"), ["y"]);
+  assert.equal(bindParams('db.c.find({ s: {{s}}, n: {{n}} })', { s: { type: "auto", value: 'a"b' }, n: { type: "auto", value: "5" } }, mo), 'db.c.find({ s: "a\\"b", n: 5 })');
+  assert.equal(bindParams('db.c.find({ s: "x{{s}}" })', { s: { type: "text", value: 'q"' } }, mo), 'db.c.find({ s: "xq\\"" })');
+  assert.equal(bindParams("db.c.find({ d: {{d}} })", { d: { type: "date", value: "2026-01-01" } }, mo), 'db.c.find({ d: ISODate("2026-01-01") })');
+
+  assert.equal(normalizeFolder(" a / b//c "), "a/b/c");
+  const conn = newConnection({ host: "h" });
+  const data = normalizeDbData({
+    connections: [conn],
+    queries: [
+      { conn_id: conn.id, database: "db1", folder: "Rel/Mensal", name: "q1", sql: "SELECT 1", params: { id: { type: "number", last: 3 } } },
+      { conn_id: conn.id, database: "", name: "q2" },
+      { conn_id: "outra", database: "db1", name: "órfã" },
+    ],
+  });
+  assert.equal(data.queries.length, 2);
+  assert.deepEqual(data.queries[0].params, { id: { type: "number", last: "3" } });
+  assert.equal(queriesFor(data, conn.id, "db1").length, 1);
+  assert.equal(queriesFor(data, conn.id, "db1", true).length, 2);
+  assert.deepEqual(queryFolders(data.queries), ["Rel", "Rel/Mensal"]);
+  assert.equal(normalizeDbData({ connections: [conn], consoles: [{ conn_id: conn.id, saved_id: "x" }] }).consoles[0].saved_id, "x");
 }
 
 console.log("db utils: ok");

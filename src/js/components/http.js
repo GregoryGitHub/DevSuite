@@ -234,7 +234,7 @@ function scriptRequestToModel(r) {
  * Full pipeline: pre-request scripts → build → Rust → test scripts → history.
  * Always resolves with an entry: { state, response, error, tests, logs, sent, at }.
  */
-async function execute(model, { key, iteration = 0, record = true, onUpdate = () => {} } = {}) {
+async function execute(model, { key, iteration = 0, record = true, onUpdate = () => {}, environment, locals = null } = {}) {
   const collection = findColl(model.collection_id);
   const tests = [];
   const logs = [];
@@ -242,9 +242,10 @@ async function execute(model, { key, iteration = 0, record = true, onUpdate = ()
   const ctx = {
     request: clone(model),
     collection,
-    environment: activeEnv(),
+    // A CLI escolhe o ambiente (--env) e já traz variáveis locais (--var).
+    environment: environment === undefined ? activeEnv() : environment,
     globals: data().globals,
-    locals: new Map(),
+    locals: new Map(locals || []),
     iteration,
     sendRequest: async (r) => {
       const sub = scriptRequestToModel(r);
@@ -1682,3 +1683,28 @@ export function initHttp() {
     reload: async () => setHttpData(await loadHttpDataApi()),
   });
 }
+
+// ---------- CLI (js/cli/httpCli.js) ----------
+
+/** Operações do HTTP usadas pela CLI `devsuite`, sobre o documento vivo desta janela. */
+export const httpHost = {
+  execute,
+  requestPath,
+  activeEnv,
+  setActiveEnv,
+  deleteRequest,
+  /** Ordem do Runner: requisições da raiz, depois cada pasta na ordem da árvore. */
+  runnerOrder(coll, folderIds = null) {
+    const order = new Map([0, ...flattenTree(coll.folders).map((e) => e.folder.id)].map((id, i) => [id, i]));
+    return data()
+      .requests.filter((r) => r.collection_id === coll.id && (!folderIds || folderIds.has(r.folder_id)))
+      .sort((a, b) => (order.get(a.folder_id) ?? 0) - (order.get(b.folder_id) ?? 0));
+  },
+  /** Grava já e redesenha (edições feitas fora da interface). */
+  commit() {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveHttpDataApi(data());
+    renderHttp();
+  },
+};

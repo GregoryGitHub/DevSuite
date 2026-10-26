@@ -1,8 +1,12 @@
 [package]
 name = "todo-rs"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Lightweight todo list running in the Windows tray"
+
+# CLI `devsuite` (cli/): binário de console que conversa com o app pelo named pipe/socket.
+[workspace]
+members = ["cli"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -35,6 +39,9 @@ amqprs = { version = "2.1", features = ["tls"] }
 amqp_serde = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tauri-plugin-single-instance = "2"
+# Redis (app "Redis"): standalone/Cluster/Sentinel com TLS (rustls); túnel SSH em Rust puro.
+redis = { version = "1.8", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-insecure", "cluster-async", "sentinel"] }
+russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
 
 # Exportar notas em PDF (note_pdf.rs): mesmas versões usadas pelo Tauri/wry. Prévia de .md com
 # Espaço no Explorer (quicklook.rs): hook de teclado + Shell (IShellWindows/IFolderView2).

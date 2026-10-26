@@ -1,6 +1,6 @@
 import { state } from "../state.js";
 import { hasTauri, openDirectoryDialogApi, saveSettingsApi } from "../api.js";
-import { switchNotesStorage } from "./notes.js";
+import { switchNotesStorage, createVault } from "./notes.js";
 import { addVaultPath, knownVaults, sameVaultPath } from "../utils/vaultNote.js";
 
 // Configurações: onde as notas ficam — banco local (notes.db) ou cofre (pasta de Markdown,
@@ -11,6 +11,7 @@ const pathEl = document.getElementById("setting-vault-path");
 const listEl = document.getElementById("setting-vault-list");
 const statusEl = document.getElementById("setting-vault-status");
 const pickBtn = document.getElementById("setting-vault-pick");
+const createBtn = document.getElementById("setting-vault-create");
 const copyRow = document.getElementById("setting-vault-copy-row");
 const copyInput = document.getElementById("setting-vault-copy");
 
@@ -56,6 +57,7 @@ export function renderNotesStorage() {
     }),
   );
   pickBtn.disabled = locked;
+  createBtn.disabled = locked;
   copyRow.hidden = isVault();
   if (notesAway()) setStatus(AWAY_TEXT);
   else if (statusEl.textContent === AWAY_TEXT) setStatus("");
@@ -100,6 +102,14 @@ export function initNotesStorage() {
     state.settings.vault_path = path;
     saveSettingsApi(state.settings);
     setStatus("");
+    renderNotesStorage();
+  });
+
+  // Cofre novo = pasta criada com repositório git (notes.js -> notes_vault_create) e aberta.
+  createBtn.addEventListener("click", async () => {
+    if (busy || notesAway()) return;
+    if (!hasTauri) return setStatus("Disponível apenas no aplicativo desktop.");
+    await createVault();
     renderNotesStorage();
   });
 

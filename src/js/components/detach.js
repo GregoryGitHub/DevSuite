@@ -15,7 +15,7 @@ import { el } from "../utils/dom.js";
 const tauri = window.__TAURI__;
 const invoke = (cmd, args) => tauri.core.invoke(cmd, args);
 
-const NAMES = { tasks: "Tarefas", notes: "Notas", http: "HTTP", json: "Formatter JSON", db: "Banco de dados", rabbit: "RabbitMQ" };
+const NAMES = { tasks: "Tarefas", notes: "Notas", http: "HTTP", json: "Formatter JSON", db: "Banco de dados", rabbit: "RabbitMQ", redis: "Redis" };
 
 const toastEl = el("div.hx-toast.ds-toast", { hidden: true });
 const menuEl = el("div.nt-menu.ds-menu", { hidden: true });

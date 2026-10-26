@@ -1,0 +1,3293 @@
+{
+  "groups": [
+    {
+      "name": "notes",
+      "summary": "Notas e cofres (banco local ou pastas de Markdown)",
+      "commands": [
+        {
+          "name": "vaults",
+          "summary": "Lista os armazenamentos de notas (banco local + cofres conhecidos) e marca o ativo"
+        },
+        {
+          "name": "list",
+          "summary": "Lista notas (metadados, sem o texto)",
+          "options": [
+            {
+              "name": "vault",
+              "value": "NOME|CAMINHO",
+              "help": "Outro armazenamento: 'local' ou o nome/caminho do cofre"
+            },
+            {
+              "name": "all-vaults",
+              "flag": true,
+              "help": "Todos os armazenamentos"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Pasta (caminho a/b), incluindo subpastas"
+            },
+            {
+              "name": "tag",
+              "value": "TAG",
+              "multi": true,
+              "help": "Só notas com a tag (hierárquica)"
+            },
+            {
+              "name": "trash",
+              "flag": true,
+              "help": "Apagadas recentemente"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Máximo de notas (padrão 200)"
+            }
+          ],
+          "examples": [
+            "devsuite notes list --folder Projetos/Api",
+            "devsuite notes list --all-vaults --tag reuniao"
+          ]
+        },
+        {
+          "name": "search",
+          "summary": "Busca no texto das notas (sem maiúsculas/acentos; aceita tag:x, type:x, status:x, id:x, [[Nota]])",
+          "args": [
+            {
+              "name": "query",
+              "required": true,
+              "help": "Texto e/ou filtros"
+            }
+          ],
+          "options": [
+            {
+              "name": "vault",
+              "value": "NOME|CAMINHO",
+              "help": "Outro armazenamento ('local' ou cofre)"
+            },
+            {
+              "name": "all-vaults",
+              "flag": true,
+              "help": "Busca em todos os armazenamentos"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Restringe à pasta (e subpastas)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Máximo de resultados (padrão 50)"
+            }
+          ],
+          "examples": [
+            "devsuite notes search \"connection string\" --all-vaults",
+            "devsuite notes search \"tag:projeto/api deploy\""
+          ]
+        },
+        {
+          "name": "get",
+          "summary": "Mostra uma nota (Markdown por padrão)",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "vault",
+              "value": "NOME|CAMINHO",
+              "help": "Outro armazenamento ('local' ou cofre)"
+            },
+            {
+              "name": "format",
+              "value": "md|html|text",
+              "help": "Formato do conteúdo (padrão md)"
+            }
+          ],
+          "examples": [
+            "devsuite notes get \"Deploy da API\"",
+            "devsuite notes get 1712345678901 --format text"
+          ]
+        },
+        {
+          "name": "create",
+          "summary": "Cria uma nota a partir de Markdown",
+          "options": [
+            {
+              "name": "title",
+              "value": "TÍTULO",
+              "help": "Título (1ª linha da nota)"
+            },
+            {
+              "name": "body",
+              "value": "MARKDOWN",
+              "input": true,
+              "help": "Corpo em Markdown (texto, @arquivo ou - para stdin)"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Pasta (caminho a/b; criada se não existir)"
+            },
+            {
+              "name": "tag",
+              "value": "TAG",
+              "multi": true,
+              "help": "Tag (propriedades do modo Zettelkasten)"
+            },
+            {
+              "name": "pin",
+              "flag": true,
+              "help": "Fixar a nota"
+            },
+            {
+              "name": "vault",
+              "value": "NOME|CAMINHO",
+              "help": "Criar em outro cofre (arquivo .md)"
+            }
+          ],
+          "examples": [
+            "echo \"- item\" | devsuite notes create --title \"Checklist\" --folder Trabalho --body -"
+          ]
+        },
+        {
+          "name": "update",
+          "summary": "Altera o conteúdo, o título ou as tags de uma nota",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "body",
+              "value": "MARKDOWN",
+              "input": true,
+              "help": "Novo corpo (substitui o texto abaixo do título)"
+            },
+            {
+              "name": "append",
+              "value": "MARKDOWN",
+              "input": true,
+              "help": "Acrescenta ao fim da nota"
+            },
+            {
+              "name": "title",
+              "value": "TÍTULO",
+              "help": "Novo título"
+            },
+            {
+              "name": "tag",
+              "value": "TAG",
+              "multi": true,
+              "help": "Substitui as tags"
+            },
+            {
+              "name": "add-tag",
+              "value": "TAG",
+              "multi": true,
+              "help": "Acrescenta tags"
+            }
+          ]
+        },
+        {
+          "name": "move",
+          "summary": "Move a nota para uma pasta",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "required": true,
+              "help": "Pasta de destino (a/b; 'Notas' = raiz)"
+            }
+          ]
+        },
+        {
+          "name": "pin",
+          "summary": "Fixa a nota",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "unpin",
+          "summary": "Desafixa a nota",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "delete",
+          "summary": "Move a nota para Apagadas Recentemente (ou apaga de vez)",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma a exclusão"
+            },
+            {
+              "name": "permanent",
+              "flag": true,
+              "help": "Apaga de vez (sem lixeira)"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "restore",
+          "summary": "Restaura uma nota da lixeira",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "folders",
+          "summary": "Árvore de pastas com a contagem de notas"
+        },
+        {
+          "name": "folder create",
+          "summary": "Cria uma pasta (e as mães que faltarem)",
+          "args": [
+            {
+              "name": "path",
+              "required": true,
+              "help": "Caminho a/b/c"
+            }
+          ]
+        },
+        {
+          "name": "tags",
+          "summary": "Tags usadas e quantas notas têm cada uma"
+        },
+        {
+          "name": "links",
+          "summary": "Links [[ ]] que saem da nota",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "backlinks",
+          "summary": "Notas que apontam para esta",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "export",
+          "summary": "Exporta a nota como arquivo Markdown",
+          "args": [
+            {
+              "name": "note",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "out",
+              "value": "ARQUIVO",
+              "path": true,
+              "required": true,
+              "help": "Arquivo .md de saída"
+            }
+          ]
+        },
+        {
+          "name": "import",
+          "summary": "Importa arquivos .md como notas (o nome do arquivo é o título)",
+          "args": [
+            {
+              "name": "file",
+              "required": true,
+              "rest": true,
+              "path": true,
+              "help": "Arquivos .md"
+            }
+          ],
+          "options": [
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Pasta de destino"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tasks",
+      "summary": "Tarefas (board kanban com Pomodoro)",
+      "commands": [
+        {
+          "name": "boards",
+          "summary": "Boards e colunas (com contagem de cards)"
+        },
+        {
+          "name": "list",
+          "summary": "Lista cards",
+          "options": [
+            {
+              "name": "board",
+              "value": "BOARD",
+              "help": "Board (padrão: o ativo)"
+            },
+            {
+              "name": "column",
+              "value": "COLUNA",
+              "help": "Só esta coluna"
+            },
+            {
+              "name": "overdue",
+              "flag": true,
+              "help": "Só atrasados"
+            },
+            {
+              "name": "today",
+              "flag": true,
+              "help": "Vencem hoje (inclui atrasados)"
+            },
+            {
+              "name": "label",
+              "value": "ETIQUETA",
+              "help": "Só com a etiqueta"
+            },
+            {
+              "name": "query",
+              "value": "TEXTO",
+              "help": "Busca no título, anotação e etiquetas"
+            },
+            {
+              "name": "archived",
+              "flag": true,
+              "help": "Arquivados"
+            },
+            {
+              "name": "all-boards",
+              "flag": true,
+              "help": "Todos os boards"
+            }
+          ]
+        },
+        {
+          "name": "get",
+          "summary": "Detalhe de um card",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "add",
+          "summary": "Cria um card",
+          "args": [
+            {
+              "name": "title",
+              "required": true,
+              "help": "Título do card"
+            }
+          ],
+          "options": [
+            {
+              "name": "board",
+              "value": "BOARD",
+              "help": "Board (padrão: o ativo)"
+            },
+            {
+              "name": "column",
+              "value": "COLUNA",
+              "help": "Coluna (padrão: a primeira)"
+            },
+            {
+              "name": "due",
+              "value": "AAAA-MM-DD",
+              "help": "Prazo (também 'hoje', 'amanha')"
+            },
+            {
+              "name": "label",
+              "value": "ETIQUETA",
+              "multi": true,
+              "help": "Etiqueta (criada se não existir)"
+            },
+            {
+              "name": "note",
+              "value": "TEXTO",
+              "input": true,
+              "help": "Anotação"
+            }
+          ]
+        },
+        {
+          "name": "update",
+          "summary": "Altera um card",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "title",
+              "value": "TÍTULO",
+              "help": "Novo título"
+            },
+            {
+              "name": "due",
+              "value": "AAAA-MM-DD",
+              "help": "Prazo ('none' remove)"
+            },
+            {
+              "name": "label",
+              "value": "ETIQUETA",
+              "multi": true,
+              "help": "Substitui as etiquetas"
+            },
+            {
+              "name": "note",
+              "value": "TEXTO",
+              "input": true,
+              "help": "Substitui a anotação"
+            }
+          ]
+        },
+        {
+          "name": "move",
+          "summary": "Move o card para outra coluna/board",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "column",
+              "value": "COLUNA",
+              "help": "Coluna de destino"
+            },
+            {
+              "name": "board",
+              "value": "BOARD",
+              "help": "Board de destino (1ª coluna se --column faltar)"
+            },
+            {
+              "name": "top",
+              "flag": true,
+              "help": "No topo da coluna (padrão: no fim)"
+            }
+          ]
+        },
+        {
+          "name": "done",
+          "summary": "Move o card para a coluna de concluídos",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "archive",
+          "summary": "Arquiva o card",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "unarchive",
+          "summary": "Restaura um card arquivado",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ]
+        },
+        {
+          "name": "delete",
+          "summary": "Exclui o card de vez",
+          "args": [
+            {
+              "name": "card",
+              "required": true,
+              "help": "Id ou título"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma a exclusão"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "labels",
+          "summary": "Etiquetas e cores"
+        }
+      ]
+    },
+    {
+      "name": "http",
+      "summary": "Cliente HTTP (coleções estilo Postman, scripts pre-request/tests)",
+      "commands": [
+        {
+          "name": "collections",
+          "summary": "Coleções com pastas e número de requisições"
+        },
+        {
+          "name": "requests",
+          "summary": "Lista requisições",
+          "options": [
+            {
+              "name": "collection",
+              "value": "COLEÇÃO",
+              "help": "Só desta coleção"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Só desta pasta (caminho a/b dentro da coleção)"
+            },
+            {
+              "name": "query",
+              "value": "TEXTO",
+              "help": "Filtra por nome, método ou URL"
+            }
+          ]
+        },
+        {
+          "name": "request get",
+          "summary": "Requisição completa (headers, corpo, auth, scripts)",
+          "args": [
+            {
+              "name": "request",
+              "required": true,
+              "help": "Id, nome ou caminho \"Coleção/Pasta/Nome\""
+            }
+          ]
+        },
+        {
+          "name": "request create",
+          "summary": "Cria uma requisição numa coleção",
+          "options": [
+            {
+              "name": "name",
+              "value": "NOME",
+              "required": true,
+              "help": "Nome da requisição"
+            },
+            {
+              "name": "collection",
+              "value": "COLEÇÃO",
+              "required": true,
+              "help": "Coleção (criada se não existir)"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Pasta (a/b; criada se não existir)"
+            },
+            {
+              "name": "method",
+              "value": "MÉTODO",
+              "help": "GET, POST, PUT, PATCH, DELETE... (padrão GET)"
+            },
+            {
+              "name": "url",
+              "value": "URL",
+              "help": "URL (aceita {{variáveis}})"
+            },
+            {
+              "name": "header",
+              "value": "'Nome: valor'",
+              "multi": true,
+              "help": "Header"
+            },
+            {
+              "name": "param",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Query param"
+            },
+            {
+              "name": "body",
+              "value": "CORPO",
+              "input": true,
+              "help": "Corpo (texto, @arquivo ou -)"
+            },
+            {
+              "name": "body-type",
+              "value": "json|text|xml|html|javascript|graphql|urlencoded|form|none",
+              "help": "Tipo do corpo (padrão: json se parecer JSON)"
+            },
+            {
+              "name": "form",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Campo de formulário (urlencoded/form)"
+            },
+            {
+              "name": "auth",
+              "value": "inherit|none|bearer:TOKEN|basic:USUÁRIO:SENHA|apikey:NOME:VALOR[:query]",
+              "help": "Autenticação (padrão inherit)"
+            },
+            {
+              "name": "pre-script",
+              "value": "JS",
+              "input": true,
+              "help": "Script pre-request (API pm)"
+            },
+            {
+              "name": "test-script",
+              "value": "JS",
+              "input": true,
+              "help": "Script de testes (pm.test, pm.expect)"
+            },
+            {
+              "name": "description",
+              "value": "TEXTO",
+              "help": "Descrição"
+            }
+          ],
+          "examples": [
+            "devsuite http request create --collection Api --name Login --method POST --url \"{{base}}/login\" --body @login.json --test-script @tests.js"
+          ]
+        },
+        {
+          "name": "request update",
+          "summary": "Altera uma requisição (só as opções informadas)",
+          "args": [
+            {
+              "name": "request",
+              "required": true,
+              "help": "Id, nome ou caminho"
+            }
+          ],
+          "options": [
+            {
+              "name": "name",
+              "value": "NOME",
+              "help": "Novo nome"
+            },
+            {
+              "name": "method",
+              "value": "MÉTODO",
+              "help": "Método"
+            },
+            {
+              "name": "url",
+              "value": "URL",
+              "help": "URL"
+            },
+            {
+              "name": "header",
+              "value": "'Nome: valor'",
+              "multi": true,
+              "help": "Substitui os headers"
+            },
+            {
+              "name": "param",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Substitui os query params"
+            },
+            {
+              "name": "body",
+              "value": "CORPO",
+              "input": true,
+              "help": "Corpo"
+            },
+            {
+              "name": "body-type",
+              "value": "TIPO",
+              "help": "Tipo do corpo"
+            },
+            {
+              "name": "form",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Substitui os campos do formulário"
+            },
+            {
+              "name": "auth",
+              "value": "AUTH",
+              "help": "Autenticação"
+            },
+            {
+              "name": "pre-script",
+              "value": "JS",
+              "input": true,
+              "help": "Script pre-request"
+            },
+            {
+              "name": "test-script",
+              "value": "JS",
+              "input": true,
+              "help": "Script de testes"
+            },
+            {
+              "name": "description",
+              "value": "TEXTO",
+              "help": "Descrição"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Move para a pasta ('' = raiz da coleção)"
+            }
+          ]
+        },
+        {
+          "name": "request delete",
+          "summary": "Exclui uma requisição",
+          "args": [
+            {
+              "name": "request",
+              "required": true,
+              "help": "Id, nome ou caminho"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "send",
+          "summary": "Envia uma requisição salva (scripts, variáveis e auth como na interface)",
+          "args": [
+            {
+              "name": "request",
+              "required": true,
+              "help": "Id, nome ou caminho"
+            }
+          ],
+          "options": [
+            {
+              "name": "env",
+              "value": "AMBIENTE",
+              "help": "Ambiente (padrão: o ativo; 'none' = nenhum)"
+            },
+            {
+              "name": "var",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Variável local (maior prioridade)"
+            },
+            {
+              "name": "no-history",
+              "flag": true,
+              "help": "Não grava no histórico"
+            },
+            {
+              "name": "body-only",
+              "flag": true,
+              "help": "Só o corpo da resposta"
+            },
+            {
+              "name": "max-body",
+              "value": "KB",
+              "number": true,
+              "help": "Corta o corpo devolvido (padrão 512 KB; 0 = sem limite)"
+            }
+          ],
+          "examples": [
+            "devsuite http send \"Api/Auth/Login\" --env Dev --var user=ana"
+          ]
+        },
+        {
+          "name": "curl",
+          "summary": "Executa um comando cURL (com variáveis do ambiente); --save grava como requisição",
+          "args": [
+            {
+              "name": "command",
+              "required": true,
+              "input": true,
+              "help": "Comando curl (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "env",
+              "value": "AMBIENTE",
+              "help": "Ambiente para {{variáveis}}"
+            },
+            {
+              "name": "save",
+              "flag": true,
+              "help": "Salva como requisição"
+            },
+            {
+              "name": "collection",
+              "value": "COLEÇÃO",
+              "help": "Coleção ao salvar"
+            },
+            {
+              "name": "name",
+              "value": "NOME",
+              "help": "Nome ao salvar"
+            },
+            {
+              "name": "body-only",
+              "flag": true,
+              "help": "Só o corpo da resposta"
+            },
+            {
+              "name": "max-body",
+              "value": "KB",
+              "number": true,
+              "help": "Corta o corpo devolvido (padrão 512 KB)"
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "summary": "Runner: envia todas as requisições de uma coleção ou pasta, em ordem",
+          "args": [
+            {
+              "name": "target",
+              "required": true,
+              "help": "Coleção ou \"Coleção/Pasta\""
+            }
+          ],
+          "options": [
+            {
+              "name": "env",
+              "value": "AMBIENTE",
+              "help": "Ambiente"
+            },
+            {
+              "name": "var",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Variável local"
+            },
+            {
+              "name": "iterations",
+              "value": "N",
+              "number": true,
+              "help": "Repetições (padrão 1)"
+            },
+            {
+              "name": "delay",
+              "value": "MS",
+              "number": true,
+              "help": "Pausa entre requisições"
+            },
+            {
+              "name": "bail",
+              "flag": true,
+              "help": "Para no primeiro erro/teste falho"
+            }
+          ]
+        },
+        {
+          "name": "envs",
+          "summary": "Ambientes (o ativo marcado) com as variáveis"
+        },
+        {
+          "name": "env set",
+          "summary": "Define variáveis de um ambiente (cria o ambiente se não existir)",
+          "args": [
+            {
+              "name": "env",
+              "required": true,
+              "help": "Nome do ambiente ('globals' = globais)"
+            }
+          ],
+          "options": [
+            {
+              "name": "var",
+              "value": "chave=valor",
+              "multi": true,
+              "required": true,
+              "help": "Variável"
+            },
+            {
+              "name": "secret",
+              "flag": true,
+              "help": "Marca como segredo (mascarada na interface)"
+            }
+          ]
+        },
+        {
+          "name": "env use",
+          "summary": "Ativa um ambiente ('none' desativa)",
+          "args": [
+            {
+              "name": "env",
+              "required": true,
+              "help": "Nome"
+            }
+          ]
+        },
+        {
+          "name": "history",
+          "summary": "Histórico de envios",
+          "options": [
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Quantos (padrão 20)"
+            }
+          ]
+        },
+        {
+          "name": "collection create",
+          "summary": "Cria uma coleção",
+          "args": [
+            {
+              "name": "name",
+              "required": true,
+              "help": "Nome"
+            }
+          ]
+        },
+        {
+          "name": "collection delete",
+          "summary": "Exclui uma coleção e as requisições dela",
+          "args": [
+            {
+              "name": "collection",
+              "required": true,
+              "help": "Coleção"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "env delete",
+          "summary": "Exclui um ambiente",
+          "args": [
+            {
+              "name": "env",
+              "required": true,
+              "help": "Ambiente"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "folder create",
+          "summary": "Cria uma pasta numa coleção",
+          "args": [
+            {
+              "name": "path",
+              "required": true,
+              "help": "\"Coleção/Pasta/Sub\""
+            }
+          ]
+        },
+        {
+          "name": "import",
+          "summary": "Importa uma coleção Postman v2.1 (JSON)",
+          "args": [
+            {
+              "name": "file",
+              "required": true,
+              "path": true,
+              "help": "Arquivo .json"
+            }
+          ]
+        },
+        {
+          "name": "export",
+          "summary": "Exporta uma coleção no formato Postman v2.1",
+          "args": [
+            {
+              "name": "collection",
+              "required": true,
+              "help": "Coleção"
+            }
+          ],
+          "options": [
+            {
+              "name": "out",
+              "value": "ARQUIVO",
+              "path": true,
+              "help": "Arquivo de saída (sem = imprime)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "db",
+      "summary": "Bancos de dados (SQL Server, Azure SQL, MongoDB)",
+      "commands": [
+        {
+          "name": "conns",
+          "summary": "Conexões salvas (sem senhas)"
+        },
+        {
+          "name": "conn add",
+          "summary": "Cria uma conexão (a senha vai para o cofre do sistema)",
+          "options": [
+            {
+              "name": "name",
+              "value": "NOME",
+              "required": true,
+              "help": "Nome da conexão"
+            },
+            {
+              "name": "driver",
+              "value": "mssql|mongo",
+              "help": "Banco (padrão mssql)"
+            },
+            {
+              "name": "host",
+              "value": "HOST",
+              "help": "SQL Server: servidor (ex.: localhost, x.database.windows.net)"
+            },
+            {
+              "name": "port",
+              "value": "PORTA",
+              "number": true,
+              "help": "Porta (padrão 1433)"
+            },
+            {
+              "name": "instance",
+              "value": "INSTÂNCIA",
+              "help": "Instância nomeada (SQL Browser)"
+            },
+            {
+              "name": "database",
+              "value": "BANCO",
+              "help": "Banco padrão"
+            },
+            {
+              "name": "user",
+              "value": "USUÁRIO",
+              "help": "Usuário (login SQL)"
+            },
+            {
+              "name": "password",
+              "value": "SENHA",
+              "input": true,
+              "help": "Senha (prefira @arquivo ou - para não ficar no histórico do shell)"
+            },
+            {
+              "name": "uri",
+              "value": "mongodb://...",
+              "help": "MongoDB: connection string (a senha nela vai para o cofre)"
+            },
+            {
+              "name": "encrypt",
+              "value": "on|strict|off",
+              "help": "Criptografia TLS (padrão on)"
+            },
+            {
+              "name": "trust-cert",
+              "flag": true,
+              "help": "Aceita certificado não confiável (TrustServerCertificate)"
+            },
+            {
+              "name": "entra",
+              "flag": true,
+              "help": "Login Microsoft Entra interativo (abre o navegador)"
+            },
+            {
+              "name": "tenant",
+              "value": "TENANT",
+              "help": "Entra: tenant"
+            },
+            {
+              "name": "read-only",
+              "flag": true,
+              "help": "Somente leitura (a CLI e o grid recusam escrita)"
+            },
+            {
+              "name": "test",
+              "flag": true,
+              "help": "Testa antes de salvar"
+            }
+          ]
+        },
+        {
+          "name": "conn remove",
+          "summary": "Remove uma conexão (e a senha do cofre)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "disconnect",
+          "summary": "Fecha as sessões da CLI nesta conexão (ex.: antes de DROP DATABASE)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ]
+        },
+        {
+          "name": "test",
+          "summary": "Testa a conexão",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Nome ou id da conexão"
+            }
+          ]
+        },
+        {
+          "name": "databases",
+          "summary": "Bancos do servidor",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ]
+        },
+        {
+          "name": "schemas",
+          "summary": "Schemas do banco",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco (padrão: o da conexão)"
+            }
+          ]
+        },
+        {
+          "name": "objects",
+          "summary": "Tabelas, views, procedures e funções (MongoDB: coleções)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "schema",
+              "value": "SCHEMA",
+              "help": "Só este schema"
+            },
+            {
+              "name": "kind",
+              "value": "table|view|procedure|function",
+              "help": "Só este tipo"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra pelo nome"
+            }
+          ]
+        },
+        {
+          "name": "describe",
+          "summary": "Estrutura de uma tabela: colunas, PK, identity, FKs, índices, checks",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "table",
+              "required": true,
+              "help": "schema.tabela (ou tabela; MongoDB: coleção)"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            }
+          ]
+        },
+        {
+          "name": "ddl",
+          "summary": "DDL (CREATE) de um objeto",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "object",
+              "required": true,
+              "help": "schema.objeto"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "kind",
+              "value": "table|view|procedure|function",
+              "help": "Tipo (padrão: descobre)"
+            }
+          ]
+        },
+        {
+          "name": "script",
+          "summary": "DDL do banco inteiro em ordem de criação (SQL Server)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "schema",
+              "value": "SCHEMA",
+              "multi": true,
+              "help": "Só estes schemas"
+            },
+            {
+              "name": "if-not-exists",
+              "flag": true,
+              "help": "Protege cada objeto com IF NOT EXISTS"
+            },
+            {
+              "name": "out",
+              "value": "ARQUIVO",
+              "path": true,
+              "help": "Grava num arquivo .sql"
+            }
+          ]
+        },
+        {
+          "name": "query",
+          "summary": "Executa SQL (ou sintaxe mongosh no MongoDB); escrita exige --write",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "sql",
+              "required": true,
+              "input": true,
+              "help": "SQL/mongosh (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "max-rows",
+              "value": "N",
+              "number": true,
+              "help": "Linhas por result set (padrão 500)"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite INSERT/UPDATE/DELETE/DDL/EXEC (e escrita no MongoDB)"
+            },
+            {
+              "name": "format",
+              "value": "table|json|csv|tsv|md",
+              "help": "Formato da saída (padrão: table no terminal, json fora)"
+            }
+          ],
+          "guard": "write",
+          "examples": [
+            "devsuite db query Local \"select top 10 * from dbo.Clientes\" --db Loja",
+            "devsuite db query Mongo \"db.pedidos.find({status: 'novo'}).limit(5)\" --db loja"
+          ]
+        },
+        {
+          "name": "plan",
+          "summary": "Plano de execução (SQL Server): operadores mais caros, avisos, índices faltantes e diagnósticos; --analyze executa e traz o plano real + IO/TIME",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "sql",
+              "required": true,
+              "input": true,
+              "help": "SQL (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "analyze",
+              "flag": true,
+              "help": "Executa a consulta (plano real, linhas reais, STATISTICS IO/TIME); escrita exige --write"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite --analyze de comandos que alteram dados"
+            },
+            {
+              "name": "top",
+              "value": "N",
+              "number": true,
+              "help": "Operadores mais caros por comando (padrão 5)"
+            },
+            {
+              "name": "xml",
+              "flag": true,
+              "help": "Devolve o XML do plano em vez do resumo"
+            },
+            {
+              "name": "out",
+              "value": "ARQUIVO",
+              "path": true,
+              "help": "Grava o plano em .sqlplan (abre no SSMS e no Dev Suite)"
+            }
+          ],
+          "guard": "write",
+          "examples": [
+            "devsuite db plan Local \"select * from dbo.Pedidos where cliente_id = 42\" --db Loja",
+            "devsuite db plan Local @lenta.sql --db Loja --analyze --out lenta.sqlplan"
+          ]
+        },
+        {
+          "name": "top-queries",
+          "summary": "Consultas mais caras do cache de planos (ou do Query Store com --store)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "by",
+              "value": "cpu|avg_cpu|duration|avg_duration|reads|writes|physical|executions|memory",
+              "help": "Critério (padrão cpu; no Query Store: duration|avg_duration|cpu|reads|executions|memory)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Quantas (padrão 20)"
+            },
+            {
+              "name": "all-dbs",
+              "flag": true,
+              "help": "Todo o servidor, não só o banco"
+            },
+            {
+              "name": "store",
+              "flag": true,
+              "help": "Usa o Query Store (histórico) em vez do cache"
+            },
+            {
+              "name": "hours",
+              "value": "N",
+              "number": true,
+              "help": "Query Store: período em horas (padrão 24)"
+            },
+            {
+              "name": "regressed",
+              "flag": true,
+              "help": "Query Store: consultas que pioraram em relação à semana anterior"
+            },
+            {
+              "name": "plan",
+              "flag": true,
+              "help": "Inclui o resumo do plano das 5 primeiras"
+            }
+          ],
+          "examples": [
+            "devsuite db top-queries Local --db Loja --by reads --limit 10",
+            "devsuite db top-queries Local --db Loja --store --regressed"
+          ]
+        },
+        {
+          "name": "sessions",
+          "summary": "Sessões ativas, esperas e cadeias de bloqueio (SQL Server)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "all",
+              "flag": true,
+              "help": "Todas as sessões de usuário (inclusive ociosas)"
+            },
+            {
+              "name": "blocking",
+              "flag": true,
+              "help": "Só as cadeias de bloqueio"
+            }
+          ],
+          "examples": [
+            "devsuite db sessions Local --blocking"
+          ]
+        },
+        {
+          "name": "waits",
+          "summary": "Esperas do servidor por tipo e categoria (sem as benignas); --sample mede só os próximos N segundos",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "sample",
+              "value": "SEGUNDOS",
+              "number": true,
+              "help": "Amostra (diferença entre duas leituras)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Quantos tipos (padrão 15)"
+            }
+          ],
+          "examples": [
+            "devsuite db waits Local --sample 10"
+          ]
+        },
+        {
+          "name": "indexes",
+          "summary": "Índices faltantes (com CREATE INDEX), uso dos índices, não usados, fragmentação ou estatísticas desatualizadas",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco"
+            },
+            {
+              "name": "table",
+              "value": "SCHEMA.TABELA",
+              "help": "Só esta tabela"
+            },
+            {
+              "name": "kind",
+              "value": "missing|usage|unused|fragmentation|stale",
+              "help": "O que listar (padrão missing)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Quantas linhas (padrão 50)"
+            }
+          ],
+          "examples": [
+            "devsuite db indexes Local --db Loja --kind missing",
+            "devsuite db indexes Local --db Loja --table dbo.Pedidos --kind usage"
+          ]
+        },
+        {
+          "name": "queries",
+          "summary": "Consultas salvas (catálogo por conexão e banco), com os parâmetros de cada uma",
+          "options": [
+            {
+              "name": "conn",
+              "value": "CONEXÃO",
+              "help": "Só desta conexão"
+            },
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Só deste banco"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Só desta pasta (e subpastas)"
+            }
+          ],
+          "examples": [
+            "devsuite db queries --conn Local --db Loja"
+          ]
+        },
+        {
+          "name": "run-saved",
+          "summary": "Executa uma consulta salva; parâmetros :nome / {{nome}} com --param (escrita exige --write)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "query",
+              "required": true,
+              "help": "Nome (ou id) da consulta salva"
+            }
+          ],
+          "options": [
+            {
+              "name": "param",
+              "value": "NOME=VALOR",
+              "multi": true,
+              "help": "Valor de um parâmetro (repita); NOME:tipo=VALOR força o tipo (text, number, date, bool, null, raw)"
+            },
+            {
+              "name": "use-last",
+              "flag": true,
+              "help": "Parâmetros sem --param usam o último valor usado"
+            },
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco (padrão: o da consulta)"
+            },
+            {
+              "name": "max-rows",
+              "value": "N",
+              "number": true,
+              "help": "Linhas por result set (padrão 500)"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite consultas que alteram dados"
+            },
+            {
+              "name": "format",
+              "value": "table|json|csv|tsv|md",
+              "help": "Formato da saída (padrão: table no terminal, json fora)"
+            }
+          ],
+          "guard": "write",
+          "examples": [
+            "devsuite db run-saved Local \"Pedidos do cliente\" --param id=42"
+          ]
+        },
+        {
+          "name": "save-query",
+          "summary": "Salva uma consulta no catálogo da conexão/banco",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "name",
+              "required": true,
+              "help": "Nome da consulta"
+            },
+            {
+              "name": "sql",
+              "required": true,
+              "input": true,
+              "help": "SQL/mongosh (texto, @arquivo ou -); use :nome para parâmetros"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "BANCO",
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "folder",
+              "value": "PASTA",
+              "help": "Pasta (subpastas com /)"
+            },
+            {
+              "name": "description",
+              "value": "TEXTO",
+              "help": "Descrição"
+            }
+          ],
+          "examples": [
+            "devsuite db save-query Local \"Pedidos do cliente\" \"select * from dbo.Pedidos where ClienteId = :id\" --db Loja --folder Relatórios"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "rabbit",
+      "summary": "RabbitMQ (management + AMQP): filas, mensagens, gravações",
+      "commands": [
+        {
+          "name": "conns",
+          "summary": "Conexões salvas (sem senhas)"
+        },
+        {
+          "name": "conn add",
+          "summary": "Cria uma conexão (a senha vai para o cofre do sistema)",
+          "options": [
+            {
+              "name": "name",
+              "value": "NOME",
+              "required": true,
+              "help": "Nome da conexão"
+            },
+            {
+              "name": "url",
+              "value": "URL",
+              "help": "URL do management (padrão http://localhost:15672)"
+            },
+            {
+              "name": "user",
+              "value": "USUÁRIO",
+              "help": "Usuário (padrão guest)"
+            },
+            {
+              "name": "password",
+              "value": "SENHA",
+              "input": true,
+              "help": "Senha (prefira @arquivo ou -)"
+            },
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost padrão (/)"
+            },
+            {
+              "name": "amqp-host",
+              "value": "HOST",
+              "help": "Host AMQP (padrão: o do management)"
+            },
+            {
+              "name": "amqp-port",
+              "value": "PORTA",
+              "number": true,
+              "help": "Porta AMQP (padrão 5672)"
+            },
+            {
+              "name": "protected",
+              "flag": true,
+              "help": "Ambiente sensível: operações destrutivas exigem --confirm <nome>"
+            },
+            {
+              "name": "test",
+              "flag": true,
+              "help": "Testa antes de salvar"
+            }
+          ]
+        },
+        {
+          "name": "conn remove",
+          "summary": "Remove uma conexão (e a senha do cofre)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "overview",
+          "summary": "Totais, taxas, alarmes, DLQs com mensagens, filas sem consumidor, nós",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost (padrão: o da conexão)"
+            }
+          ]
+        },
+        {
+          "name": "queues",
+          "summary": "Filas",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra pelo nome"
+            },
+            {
+              "name": "non-empty",
+              "flag": true,
+              "help": "Só com mensagens"
+            },
+            {
+              "name": "no-consumers",
+              "flag": true,
+              "help": "Só sem consumidor"
+            },
+            {
+              "name": "dlq",
+              "flag": true,
+              "help": "Só dead-letter queues"
+            }
+          ]
+        },
+        {
+          "name": "queue",
+          "summary": "Detalhe de uma fila (contadores, taxas, argumentos, consumidores, ligações)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            }
+          ]
+        },
+        {
+          "name": "exchanges",
+          "summary": "Exchanges",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra pelo nome"
+            }
+          ]
+        },
+        {
+          "name": "bindings",
+          "summary": "Ligações",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra por origem/destino/routing key"
+            }
+          ]
+        },
+        {
+          "name": "connections",
+          "summary": "Conexões AMQP abertas no servidor",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra"
+            }
+          ]
+        },
+        {
+          "name": "channels",
+          "summary": "Canais",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra"
+            }
+          ]
+        },
+        {
+          "name": "consumers",
+          "summary": "Consumidores",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Filtra pela fila/tag"
+            }
+          ]
+        },
+        {
+          "name": "peek",
+          "summary": "Espia mensagens sem removê-las (requeue; elas ficam marcadas redelivered)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "count",
+              "value": "N",
+              "number": true,
+              "help": "Quantas (padrão 10)"
+            },
+            {
+              "name": "save",
+              "flag": true,
+              "help": "Salva no log de mensagens (Gravações)"
+            }
+          ]
+        },
+        {
+          "name": "consume",
+          "summary": "Retira mensagens da fila (ack); ficam salvas no log",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "count",
+              "value": "N",
+              "number": true,
+              "help": "Quantas (padrão 1)"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma a operação destrutiva"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "publish",
+          "summary": "Publica mensagens (aceita {{n}}, {{uuid}}, {{now}}, {{timestamp}})",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "exchange",
+              "value": "EXCHANGE",
+              "help": "Exchange ('' = padrão)"
+            },
+            {
+              "name": "routing-key",
+              "value": "CHAVE",
+              "help": "Routing key (na exchange padrão = nome da fila)"
+            },
+            {
+              "name": "queue",
+              "value": "FILA",
+              "help": "Atalho: exchange padrão com routing key = fila"
+            },
+            {
+              "name": "body",
+              "value": "CORPO",
+              "input": true,
+              "required": true,
+              "help": "Corpo (texto, @arquivo ou -)"
+            },
+            {
+              "name": "header",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Header"
+            },
+            {
+              "name": "property",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Propriedade (content_type, correlation_id, message_id, type, reply_to, expiration, priority, delivery_mode...)"
+            },
+            {
+              "name": "repeat",
+              "value": "N",
+              "number": true,
+              "help": "Quantas vezes"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma a escrita"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "move",
+          "summary": "Move (ou copia) mensagens em transação AMQP",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila de origem"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "to-queue",
+              "value": "FILA",
+              "help": "Fila de destino"
+            },
+            {
+              "name": "to-exchange",
+              "value": "EXCHANGE",
+              "help": "Exchange de destino"
+            },
+            {
+              "name": "routing-key",
+              "value": "CHAVE",
+              "help": "Routing key (com --to-exchange)"
+            },
+            {
+              "name": "origin",
+              "flag": true,
+              "help": "Devolve cada mensagem à origem indicada no x-death (DLQ)"
+            },
+            {
+              "name": "count",
+              "value": "N",
+              "number": true,
+              "help": "Quantas (padrão: todas)"
+            },
+            {
+              "name": "copy",
+              "flag": true,
+              "help": "Copia em vez de mover"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "purge",
+          "summary": "Esvazia a fila",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "delete-queue",
+          "summary": "Exclui a fila",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "delete-exchange",
+          "summary": "Exclui a exchange",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "exchange",
+              "required": true,
+              "help": "Exchange"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "declare-queue",
+          "summary": "Cria uma fila (durável por padrão)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "queue",
+              "required": true,
+              "help": "Fila"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "type",
+              "value": "classic|quorum|stream",
+              "help": "Tipo (padrão classic)"
+            },
+            {
+              "name": "arg",
+              "value": "chave=valor",
+              "multi": true,
+              "help": "Argumento (x-dead-letter-exchange=...)"
+            },
+            {
+              "name": "bind",
+              "value": "EXCHANGE[:CHAVE]",
+              "multi": true,
+              "help": "Liga a uma exchange"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "close-connection",
+          "summary": "Fecha uma conexão AMQP do servidor",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "name",
+              "required": true,
+              "help": "Nome da conexão no servidor"
+            }
+          ],
+          "options": [
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "CONEXÃO",
+              "help": "Nome da conexão (ambiente sensível)"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "watch",
+          "summary": "Monitora filas: uma linha JSON por ciclo (mensagens, taxas, consumidores)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "queue",
+              "value": "FILA",
+              "multi": true,
+              "help": "Só estas filas (padrão: todas com mensagens ou sem consumidor)"
+            },
+            {
+              "name": "interval",
+              "value": "SEGUNDOS",
+              "number": true,
+              "help": "Intervalo (padrão 5)"
+            },
+            {
+              "name": "cycles",
+              "value": "N",
+              "number": true,
+              "help": "Quantos ciclos (padrão: até Ctrl+C)"
+            }
+          ]
+        },
+        {
+          "name": "captures",
+          "summary": "Gravações (ativas e paradas)",
+          "args": [
+            {
+              "name": "conn",
+              "help": "Conexão (opcional)"
+            }
+          ]
+        },
+        {
+          "name": "capture start",
+          "summary": "Inicia uma gravação em segundo plano (continua após a CLI sair)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "mode",
+              "value": "tap|firehose|exchange",
+              "help": "tap = cópia das filas (padrão); firehose = tracing do vhost; exchange = exchange + routing key"
+            },
+            {
+              "name": "vhost",
+              "value": "VHOST",
+              "help": "Vhost"
+            },
+            {
+              "name": "queue",
+              "value": "FILA",
+              "multi": true,
+              "help": "Filas (tap/firehose)"
+            },
+            {
+              "name": "exchange",
+              "value": "EXCHANGE",
+              "help": "Exchange (modo exchange)"
+            },
+            {
+              "name": "routing-key",
+              "value": "CHAVE",
+              "help": "Routing key (modo exchange; padrão #)"
+            },
+            {
+              "name": "name",
+              "value": "NOME",
+              "help": "Nome da gravação"
+            },
+            {
+              "name": "max-messages",
+              "value": "N",
+              "number": true,
+              "help": "Limite (apaga as mais antigas)"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Necessário no firehose (liga o tracing do vhost)"
+            }
+          ]
+        },
+        {
+          "name": "capture stop",
+          "summary": "Para uma gravação",
+          "args": [
+            {
+              "name": "id",
+              "required": true,
+              "help": "Id da gravação"
+            }
+          ]
+        },
+        {
+          "name": "capture delete",
+          "summary": "Exclui uma gravação e as mensagens dela",
+          "args": [
+            {
+              "name": "id",
+              "required": true,
+              "help": "Id"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "messages",
+          "summary": "Busca no log de mensagens (gravações, espiadas e consumidas)",
+          "options": [
+            {
+              "name": "conn",
+              "value": "CONEXÃO",
+              "help": "Conexão"
+            },
+            {
+              "name": "capture",
+              "value": "ID",
+              "number": true,
+              "help": "Gravação"
+            },
+            {
+              "name": "search",
+              "value": "TEXTO",
+              "help": "Texto no corpo, headers ou routing key"
+            },
+            {
+              "name": "routing-key",
+              "value": "CHAVE",
+              "help": "Routing key (* coringa)"
+            },
+            {
+              "name": "queue",
+              "value": "FILA",
+              "help": "Fila"
+            },
+            {
+              "name": "exchange",
+              "value": "EXCHANGE",
+              "help": "Exchange"
+            },
+            {
+              "name": "json-path",
+              "value": "$.campo",
+              "help": "Caminho JSON no corpo"
+            },
+            {
+              "name": "json-value",
+              "value": "VALOR",
+              "help": "Valor esperado no caminho (igualdade)"
+            },
+            {
+              "name": "since",
+              "value": "DATA|10m|2h|1d",
+              "help": "Desde"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Quantas (padrão 50)"
+            },
+            {
+              "name": "full",
+              "flag": true,
+              "help": "Inclui corpo e headers completos"
+            }
+          ]
+        },
+        {
+          "name": "message",
+          "summary": "Mensagem completa do log",
+          "args": [
+            {
+              "name": "id",
+              "required": true,
+              "help": "Id"
+            }
+          ]
+        },
+        {
+          "name": "api",
+          "summary": "Chamada bruta à API de management (GET livre; outros métodos exigem --write)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "path",
+              "required": true,
+              "help": "Caminho sem /api (ex.: /queues/%2F/fila)"
+            }
+          ],
+          "options": [
+            {
+              "name": "method",
+              "value": "GET|PUT|POST|DELETE",
+              "help": "Método (padrão GET)"
+            },
+            {
+              "name": "body",
+              "value": "JSON",
+              "input": true,
+              "help": "Corpo JSON"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite métodos que alteram"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "redis",
+      "summary": "Redis: chaves, comandos, INFO, slowlog, clientes, memória, MONITOR e Pub/Sub",
+      "commands": [
+        {
+          "name": "conns",
+          "summary": "Conexões salvas (sem senhas)"
+        },
+        {
+          "name": "conn add",
+          "summary": "Cria uma conexão (a senha vai para o cofre do sistema)",
+          "options": [
+            {
+              "name": "name",
+              "value": "NOME",
+              "required": true,
+              "help": "Nome da conexão"
+            },
+            {
+              "name": "url",
+              "value": "URL",
+              "help": "redis://usuário:senha@host:porta/db (rediss:// = TLS)"
+            },
+            {
+              "name": "host",
+              "value": "HOST",
+              "help": "Host"
+            },
+            {
+              "name": "port",
+              "value": "PORTA",
+              "number": true,
+              "help": "Porta (6379)"
+            },
+            {
+              "name": "mode",
+              "value": "standalone|cluster|sentinel",
+              "help": "Modo (padrão standalone)"
+            },
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "multi": true,
+              "help": "Cluster: nós iniciais; Sentinel: sentinels"
+            },
+            {
+              "name": "master",
+              "value": "NOME",
+              "help": "Sentinel: nome do master"
+            },
+            {
+              "name": "user",
+              "value": "USUÁRIO",
+              "help": "Usuário (ACL)"
+            },
+            {
+              "name": "password",
+              "value": "SENHA",
+              "input": true,
+              "help": "Senha (prefira @arquivo ou -)"
+            },
+            {
+              "name": "tls",
+              "flag": true,
+              "help": "TLS"
+            },
+            {
+              "name": "read-only",
+              "flag": true,
+              "help": "Recusa comandos de escrita"
+            },
+            {
+              "name": "protected",
+              "flag": true,
+              "help": "Ambiente sensível: excluir/FLUSH exigem --confirm <nome>"
+            },
+            {
+              "name": "test",
+              "flag": true,
+              "help": "Testa antes de salvar"
+            }
+          ],
+          "examples": [
+            "devsuite redis conn add --name Local --url redis://localhost:6379"
+          ]
+        },
+        {
+          "name": "conn remove",
+          "summary": "Remove uma conexão (e as senhas do cofre)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            }
+          ],
+          "guard": "yes"
+        },
+        {
+          "name": "info",
+          "summary": "Resumo do servidor (versão, memória, clientes, ops/s, acerto, keyspace) ou uma seção do INFO",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "section",
+              "value": "SEÇÃO",
+              "help": "Seção crua do INFO (memory, stats, replication…)"
+            },
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "help": "Cluster: nó"
+            }
+          ],
+          "examples": [
+            "devsuite redis info Local --json"
+          ]
+        },
+        {
+          "name": "keys",
+          "summary": "Lista chaves com SCAN (nunca KEYS) e o tipo de cada uma",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "pattern",
+              "value": "PADRÃO",
+              "help": "MATCH (ex.: usuario:*)"
+            },
+            {
+              "name": "type",
+              "value": "TIPO",
+              "help": "string, hash, list, set, zset, stream…"
+            },
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Máximo de chaves (padrão 1000)"
+            }
+          ],
+          "examples": [
+            "devsuite redis keys Local --pattern \"sessao:*\" --json"
+          ]
+        },
+        {
+          "name": "get",
+          "summary": "Valor tipado de uma chave (string, hash, list, set, zset, stream com grupos, JSON) + TTL e memória",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "key",
+              "required": true,
+              "help": "Chave"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Itens de coleções (padrão 100)"
+            },
+            {
+              "name": "match",
+              "value": "PADRÃO",
+              "help": "Hash/set: filtra campos/membros"
+            },
+            {
+              "name": "start",
+              "value": "N",
+              "number": true,
+              "help": "List: índice inicial"
+            },
+            {
+              "name": "rev",
+              "flag": true,
+              "help": "Zset: maiores scores primeiro"
+            },
+            {
+              "name": "parse",
+              "flag": true,
+              "help": "String: interpreta JSON"
+            },
+            {
+              "name": "all",
+              "flag": true,
+              "help": "String: sem cortar em 1 MB"
+            }
+          ],
+          "examples": [
+            "devsuite redis get Local usuario:42:perfil --json"
+          ]
+        },
+        {
+          "name": "ttl",
+          "summary": "Mostra ou altera o TTL de uma chave",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "key",
+              "required": true,
+              "help": "Chave"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "set",
+              "value": "DURAÇÃO",
+              "help": "Novo TTL (3600, 30min, 1h30m, 7d); exige --write"
+            },
+            {
+              "name": "persist",
+              "flag": true,
+              "help": "Remove a expiração; exige --write"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite alterar dados"
+            }
+          ],
+          "examples": [
+            "devsuite redis ttl Local sessao:abc --set 1h --write"
+          ]
+        },
+        {
+          "name": "set",
+          "summary": "Grava uma string (mantém o TTL, salvo --ttl)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "key",
+              "required": true,
+              "help": "Chave"
+            },
+            {
+              "name": "value",
+              "required": true,
+              "input": true,
+              "help": "Valor (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "ttl",
+              "value": "DURAÇÃO",
+              "help": "Expira em (3600, 1h, 7d)"
+            },
+            {
+              "name": "reset-ttl",
+              "flag": true,
+              "help": "Não mantém o TTL anterior"
+            },
+            {
+              "name": "nx",
+              "flag": true,
+              "help": "Só se não existir"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite alterar dados"
+            }
+          ],
+          "guard": "write",
+          "examples": [
+            "devsuite redis set Local feature:nova-tela on --write"
+          ]
+        },
+        {
+          "name": "del",
+          "summary": "Exclui chaves (UNLINK), por nome ou --pattern",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "key",
+              "help": "Chaves",
+              "rest": true
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "pattern",
+              "value": "PADRÃO",
+              "help": "Exclui todas as chaves do padrão (SCAN)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Máximo de chaves do padrão"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite alterar dados"
+            },
+            {
+              "name": "yes",
+              "flag": true,
+              "help": "Confirma"
+            },
+            {
+              "name": "confirm",
+              "value": "NOME",
+              "help": "Ambiente sensível: nome da conexão"
+            }
+          ],
+          "guard": "yes",
+          "examples": [
+            "devsuite redis del Local --pattern \"cache:produtos:*\" --write --yes"
+          ]
+        },
+        {
+          "name": "exec",
+          "summary": "Comandos crus como no redis-cli (várias linhas = vários comandos); escrita exige --write",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "command",
+              "required": true,
+              "input": true,
+              "help": "Comando(s) (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "help": "Cluster: nó"
+            },
+            {
+              "name": "raw",
+              "flag": true,
+              "help": "Resposta como texto"
+            },
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite alterar dados"
+            },
+            {
+              "name": "confirm",
+              "value": "NOME",
+              "help": "Ambiente sensível: nome da conexão"
+            }
+          ],
+          "guard": "write",
+          "examples": [
+            "devsuite redis exec Local \"HGETALL usuario:42\" --json",
+            "devsuite redis exec Local \"XINFO GROUPS pedidos\" --json"
+          ]
+        },
+        {
+          "name": "publish",
+          "summary": "Publica uma mensagem num canal (PUBLISH)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            },
+            {
+              "name": "channel",
+              "required": true,
+              "help": "Canal"
+            },
+            {
+              "name": "message",
+              "required": true,
+              "input": true,
+              "help": "Mensagem (texto, @arquivo ou -)"
+            }
+          ],
+          "options": [
+            {
+              "name": "write",
+              "flag": true,
+              "help": "Permite alterar dados"
+            }
+          ],
+          "guard": "write"
+        },
+        {
+          "name": "slowlog",
+          "summary": "Comandos lentos (SLOWLOG GET)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "count",
+              "value": "N",
+              "number": true,
+              "help": "Quantos (padrão 50)"
+            },
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "help": "Cluster: nó"
+            }
+          ]
+        },
+        {
+          "name": "clients",
+          "summary": "Clientes conectados (CLIENT LIST)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "help": "Cluster: nó"
+            }
+          ]
+        },
+        {
+          "name": "nodes",
+          "summary": "Nós do Cluster (papel, slots, flags)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ]
+        },
+        {
+          "name": "memory",
+          "summary": "Análise de memória por SCAN + MEMORY USAGE: por tipo, prefixo, TTL e maiores chaves",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "db",
+              "value": "N",
+              "number": true,
+              "help": "Banco (padrão: o da conexão)"
+            },
+            {
+              "name": "pattern",
+              "value": "PADRÃO",
+              "help": "Só chaves do padrão"
+            },
+            {
+              "name": "separator",
+              "value": "SEP",
+              "help": "Separador dos prefixos (padrão o da conexão, :)"
+            },
+            {
+              "name": "depth",
+              "value": "N",
+              "number": true,
+              "help": "Níveis de prefixo (3)"
+            },
+            {
+              "name": "limit",
+              "value": "N",
+              "number": true,
+              "help": "Máximo de chaves (0 = todas)"
+            },
+            {
+              "name": "pause",
+              "value": "MS",
+              "number": true,
+              "help": "Pausa entre lotes (produção)"
+            },
+            {
+              "name": "top",
+              "value": "N",
+              "number": true,
+              "help": "Maiores chaves (30)"
+            },
+            {
+              "name": "prefixes",
+              "value": "N",
+              "number": true,
+              "help": "Prefixos no resultado (30)"
+            }
+          ],
+          "examples": [
+            "devsuite redis memory Local --limit 50000 --pause 10 --json"
+          ]
+        },
+        {
+          "name": "monitor",
+          "summary": "MONITOR por alguns segundos (um evento por comando); pesa no servidor",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "seconds",
+              "value": "N",
+              "number": true,
+              "help": "Duração (padrão 10; 0 = até Ctrl+C)"
+            },
+            {
+              "name": "filter",
+              "value": "TEXTO",
+              "help": "Só linhas que contêm o texto"
+            },
+            {
+              "name": "node",
+              "value": "HOST:PORTA",
+              "help": "Cluster: nó"
+            }
+          ],
+          "examples": [
+            "devsuite redis monitor Local --seconds 5 --filter usuario --json"
+          ]
+        },
+        {
+          "name": "subscribe",
+          "summary": "Assina canais/padrões por alguns segundos (um evento por mensagem)",
+          "args": [
+            {
+              "name": "conn",
+              "required": true,
+              "help": "Conexão"
+            }
+          ],
+          "options": [
+            {
+              "name": "channel",
+              "value": "CANAL",
+              "multi": true,
+              "help": "Canal (repita)"
+            },
+            {
+              "name": "pattern",
+              "value": "PADRÃO",
+              "multi": true,
+              "help": "Padrão (PSUBSCRIBE)"
+            },
+            {
+              "name": "seconds",
+              "value": "N",
+              "number": true,
+              "help": "Duração (padrão 10; 0 = até Ctrl+C)"
+            }
+          ],
+          "examples": [
+            "devsuite redis subscribe Local --pattern \"eventos:*\" --seconds 30 --json"
+          ]
+        }
+      ]
+    }
+  ]
+}

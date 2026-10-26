@@ -3,3 +3,5 @@
 Cargo.lock
 .DS_Store
 *.log
+# CLI devsuite compilada para o externalBin (build_cli.ps1 / build_cli.sh)
+src-tauri/binaries/

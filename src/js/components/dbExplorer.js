@@ -6,6 +6,8 @@ import { dbApi } from "../api.js";
 
 // Database Explorer: árvore carregada sob demanda.
 // conexão → bancos → schemas → (tabelas | views | procedures | funções) → objeto → (colunas | chaves | índices | FKs | triggers)
+// Cada banco aberto mostra antes "consultas salvas" (pastas → consultas), montado do
+// databases.json a cada desenho, sem rede.
 
 const SYSTEM_DBS = new Set(["master", "tempdb", "model", "msdb"]);
 const MONGO_SYSTEM_DBS = new Set(["admin", "local", "config"]);
@@ -42,7 +44,11 @@ const ICONS = {
   collection: "fa-solid fa-layer-group",
   mview: "fa-solid fa-eye",
   field: "fa-solid fa-tag",
+  qroot: "fa-solid fa-bookmark",
+  query: "fa-regular fa-file-code",
 };
+
+const collator = new Intl.Collator("pt-BR", { sensitivity: "base", numeric: true });
 
 const fmtCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
 
@@ -50,7 +56,9 @@ const fmtCount = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k
  * ctx: { data, conn(id), status(connId), ensureConnected(conn), disconnect(conn), openTable, openDdl,
  *        openConsole, editConnection, deleteConnection, duplicateConnection, showMenu, copy,
  *        copyConnectionString(conn, { withPassword }), saveUi, toast,
- *        schema: { modify, newTable, rename, drop, truncate, renameItem, dropItem } }
+ *        schema: { modify, newTable, rename, drop, truncate, renameItem, dropItem },
+ *        perf: { open(conn, database, section, patch), openPlanFile(conn, database) },
+ *        queries: { list(connId, database, isDefault), get, open(q, { run }), create, edit, duplicate, move, remove, removeFolder, renameFolder } }
  */
 export function createExplorer(ctx, { treeEl, searchEl }) {
   const nodes = new Map(); // key -> node
@@ -89,7 +97,8 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     } catch (e) {
       n.error = String(e);
       n.children = null;
-      expanded.delete(n.key);
+      // Banco com consultas salvas continua aberto: elas não dependem do servidor.
+      if (!(n.kind === "database" && savedRoot(n))) expanded.delete(n.key);
     } finally {
       n.loading = false;
       schedule();
@@ -119,6 +128,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
       setTimeout(() => (hadState ? restoreExpanded(k) : cur && toggle(cur, true)), 0);
       return keys;
     }
+    if (n.kind === "qroot" || n.kind === "qfolder") return n.children || [];
     if (isMongo(conn)) return fetchMongo(n, conn);
     if (n.kind === "database") {
       const list = await dbApi.introspect(tgt(conn, n.database), { kind: "schemas" });
@@ -229,7 +239,46 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
   }
 
   function expandable(n) {
-    return ["conn", "database", "sysfolder", "schema", "folder", "group", "table", "view", "procedure", "function", "collection", "mview"].includes(n.kind);
+    return ["conn", "database", "sysfolder", "schema", "folder", "group", "table", "view", "procedure", "function", "collection", "mview", "qroot", "qfolder"].includes(n.kind);
+  }
+
+  // ---------- Consultas salvas ----------
+
+  /** Nó "consultas salvas" do banco (null sem consultas), com pastas e itens já montados. */
+  function savedRoot(db) {
+    const list = ctx.queries.list(db.connId, db.database, !!db.current);
+    if (!list.length) return null;
+    const scope = { connId: db.connId, database: db.database, isDefault: !!db.current };
+    const root = node(`${db.key}/q`, { kind: "qroot", label: "consultas salvas", ...scope, folder: "", count: list.length });
+    const build = (parent, prefix) => {
+      const subs = new Set();
+      const items = [];
+      for (const q of list) {
+        if (q.folder === prefix) items.push(q);
+        else if (!prefix || q.folder.startsWith(`${prefix}/`)) subs.add(q.folder.slice(prefix ? prefix.length + 1 : 0).split("/")[0]);
+      }
+      const keys = [];
+      for (const name of [...subs].sort(collator.compare)) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        const count = list.filter((q) => q.folder === path || q.folder.startsWith(`${path}/`)).length;
+        const f = node(`${parent.key}/qf:${encodeURIComponent(name)}`, { kind: "qfolder", label: name, ...scope, folder: path, count });
+        build(f, path);
+        keys.push(f.key);
+      }
+      items.sort((a, b) => collator.compare(a.name, b.name));
+      for (const q of items) keys.push(node(`${parent.key}/qi:${q.id}`, { kind: "query", label: q.name, ...scope, folder: q.folder, queryId: q.id, title: q.description }).key);
+      parent.children = keys;
+    };
+    build(root, "");
+    return root;
+  }
+
+  /** Filhos para desenhar: num banco, "consultas salvas" vem antes do que veio do servidor. */
+  function kids(n) {
+    if (n.kind !== "database") return n.children || [];
+    const root = savedRoot(n);
+    if (!root) return n.children || [];
+    return [root.key, ...(n.children || [])];
   }
 
   async function toggle(key, open = !expanded.has(key)) {
@@ -289,7 +338,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     // Na busca, mostra um nó se ele ou algum descendente carregado combina.
     const hasMatch = (n) => {
       if (matches(n)) return true;
-      return (n.children || []).some((k) => {
+      return kids(n).some((k) => {
         const c = nodes.get(k);
         return c && hasMatch(c);
       });
@@ -297,8 +346,9 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const walk = (n, depth) => {
       if (q && !hasMatch(n)) return;
       rows.push({ n, depth });
-      const open = expanded.has(n.key) || (q && n.children && n.kind !== "conn" && (n.children || []).some((k) => hasMatch(nodes.get(k))));
-      if (open && n.children) for (const k of n.children) walk(nodes.get(k), depth + 1);
+      const children = kids(n);
+      const open = expanded.has(n.key) || (q && children.length && n.kind !== "conn" && children.some((k) => hasMatch(nodes.get(k))));
+      if (open) for (const k of children) walk(nodes.get(k), depth + 1);
     };
     for (const c of conns) walk(connNode(c), 0);
     return rows;
@@ -309,7 +359,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const open = expanded.has(n.key);
     const conn = ctx.conn(n.connId);
     let ic = n.icon || ICONS[n.kind] || "fa-regular fa-circle";
-    if (n.kind === "folder" || n.kind === "group" || n.kind === "sysfolder") ic = open ? "fa-regular fa-folder-open" : "fa-regular fa-folder";
+    if (n.kind === "folder" || n.kind === "group" || n.kind === "sysfolder" || n.kind === "qfolder") ic = open ? "fa-regular fa-folder-open" : "fa-regular fa-folder";
     if (n.kind === "conn" && /\.database\.windows\.net$/i.test(conn?.host || "")) ic = "fa-brands fa-microsoft";
     if (n.kind === "conn" && isMongo(conn)) ic = "fa-solid fa-leaf";
     let extra = "";
@@ -326,7 +376,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const status = n.loading ? '<i class="fa-solid fa-spinner fa-spin dbx-spin"></i>' : n.error ? `<i class="fa-solid fa-triangle-exclamation dbx-err" title="${escapeHtml(n.error)}"></i>` : "";
     const color = n.kind === "conn" && conn?.color ? ` style="--conn:${conn.color}"` : "";
     return (
-      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}${n.kind === "conn" && conn?.color ? " colored" : ""}" data-key="${escapeHtml(n.key)}"${n.kind === "conn" && !query ? ' draggable="true"' : ""} style="padding-left:${6 + depth * 14}px"${color}>` +
+      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}${n.kind === "conn" && conn?.color ? " colored" : ""}" data-key="${escapeHtml(n.key)}"${(n.kind === "conn" && !query) || n.kind === "query" ? ' draggable="true"' : ""}${n.title ? ` title="${escapeHtml(n.title)}"` : ""} style="padding-left:${6 + depth * 14}px"${color}>` +
       `<span class="dbx-caret">${exp ? `<i class="fa-solid fa-chevron-${open ? "down" : "right"}"></i>` : ""}</span>` +
       `<i class="${ic} dbx-icon"></i><span class="dbx-label">${escapeHtml(n.label)}</span>${extra}${meta}${status}</div>` +
       (n.error && n.kind === "conn" ? `<div class="dbx-error" style="padding-left:${26 + depth * 14}px">${escapeHtml(n.error)}</div>` : "")
@@ -389,6 +439,10 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     if (n.kind === "field") return ctx.copy(n.label, `"${n.label}" copiado`);
     if (n.kind === "procedure" || n.kind === "function" || n.kind === "trigger") return ctx.openDdl({ ...objectRef(n), kind: n.kind });
     if (n.kind === "column") return ctx.copy(n.label, `"${n.label}" copiado`);
+    if (n.kind === "query") {
+      const q = ctx.queries.get(n.queryId);
+      return q && ctx.queries.open(q);
+    }
     if (expandable(n)) toggle(n.key);
   }
 
@@ -398,6 +452,32 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const st = ctx.status(conn.id);
     const items = [];
     const consoleItem = (database) => ({ label: "Novo console", icon: "fa-solid fa-terminal", run: () => ctx.openConsole(conn, database) });
+    const perf = (database, section, patch) => () => ctx.perf.open(conn, database, section, patch);
+    if (n.kind === "query") {
+      const q = ctx.queries.get(n.queryId);
+      if (!q) return;
+      items.push(
+        { label: "Executar", icon: "fa-solid fa-play", run: () => ctx.queries.open(q, { run: true }) },
+        { label: "Abrir no console", icon: "fa-solid fa-terminal", run: () => ctx.queries.open(q) },
+        "sep",
+        { label: "Editar detalhes…", icon: "fa-solid fa-pen", run: () => ctx.queries.edit(q) },
+        { label: "Duplicar", icon: "fa-regular fa-copy", run: () => ctx.queries.duplicate(q) },
+        { label: isMongo(conn) ? "Copiar comando" : "Copiar SQL", icon: "fa-regular fa-clipboard", run: () => ctx.copy(q.sql, "Copiado") },
+        "sep",
+        { label: "Excluir", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.queries.remove(q) },
+      );
+      return ctx.showMenu(x, y, items);
+    }
+    if (n.kind === "qroot" || n.kind === "qfolder") {
+      const scope = { connId: n.connId, database: n.database, isDefault: n.isDefault, folder: n.folder };
+      items.push(
+        { label: "Nova consulta…", icon: "fa-solid fa-plus", run: () => ctx.openConsole(conn, n.database) },
+        n.kind === "qfolder" ? { label: "Renomear pasta…", icon: "fa-solid fa-i-cursor", run: () => ctx.queries.renameFolder(scope) } : null,
+        "sep",
+        { label: n.kind === "qfolder" ? "Excluir pasta e consultas" : "Excluir todas as consultas", icon: "fa-regular fa-trash-can", danger: true, run: () => ctx.queries.removeFolder(scope) },
+      );
+      return ctx.showMenu(x, y, items);
+    }
     if (n.kind === "conn") {
       items.push(
         st.state === "connected"
@@ -405,6 +485,10 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
           : { label: "Conectar", icon: "fa-solid fa-plug", run: () => toggle(n.key, true) },
         consoleItem(conn.database),
         { label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) },
+        isMongo(conn) ? null : "sep",
+        isMongo(conn) ? null : { label: "Sessões e bloqueios", icon: "fa-solid fa-users-gear", run: perf(conn.database, "sessions") },
+        isMongo(conn) ? null : { label: "Esperas do servidor", icon: "fa-solid fa-hourglass-half", run: perf(conn.database, "waits") },
+        isMongo(conn) ? null : { label: "Abrir plano .sqlplan…", icon: "fa-solid fa-diagram-project", run: () => ctx.perf.openPlanFile(conn, conn.database) },
         "sep",
         { label: "Editar conexão…", icon: "fa-solid fa-pen", run: () => ctx.editConnection(conn) },
         { label: "Duplicar", icon: "fa-regular fa-copy", run: () => ctx.duplicateConnection(conn) },
@@ -427,6 +511,13 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
             icon: "fa-solid fa-scroll",
             run: () => ctx.schema.databaseScript({ conn, database: n.database, schema: n.kind === "schema" ? n.schema : "" }),
           },
+          { header: "Desempenho" },
+          { label: "Top consultas", icon: "fa-solid fa-ranking-star", indent: true, run: perf(n.database, "top", { proc: null }) },
+          { label: "Query Store", icon: "fa-solid fa-clock-rotate-left", indent: true, run: perf(n.database, "qs") },
+          { label: "Sessões e bloqueios", icon: "fa-solid fa-users-gear", indent: true, run: perf(n.database, "sessions") },
+          { label: "Esperas", icon: "fa-solid fa-hourglass-half", indent: true, run: perf(n.database, "waits") },
+          { label: "Índices e estatísticas", icon: "fa-solid fa-bolt", indent: true, run: perf(n.database, "indexes", { table: null }) },
+          "sep",
         );
       }
       items.push({ label: "Atualizar", icon: "fa-solid fa-rotate", run: () => refresh(n.key) }, { label: "Copiar nome", icon: "fa-regular fa-clipboard", run: () => ctx.copy(n.label) });
@@ -450,6 +541,8 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
         { label: "Novo console com SELECT", icon: "fa-solid fa-terminal", run: () => ctx.openConsole(conn, n.database, ctx.dialect(conn).selectTop({ schema: n.schema, name: n.name })) },
         { label: "Ver DDL", icon: "fa-solid fa-code", run: () => ctx.openDdl(ref) },
         { label: "Gerar script…", icon: "fa-solid fa-scroll", run: () => ctx.scriptMenu(ref, x, y) },
+        n.kind === "table" && !isMongo(conn) ? { label: "Índices: uso e faltantes", icon: "fa-solid fa-bolt", run: perf(n.database, "indexes", { table: { schema: n.schema, name: n.name }, view_ix: "usage" }) } : null,
+        n.kind === "table" && !isMongo(conn) ? { label: "Estatísticas desatualizadas", icon: "fa-solid fa-chart-simple", indent: true, run: perf(n.database, "indexes", { table: { schema: n.schema, name: n.name }, view_ix: "stats" }) } : null,
         "sep",
         n.kind === "table" ? { label: "Modificar tabela…", icon: "fa-solid fa-pen-ruler", run: () => ctx.schema.modify(ref) } : null,
         n.kind === "table" ? { label: "Adicionar coluna…", icon: "fa-solid fa-plus", indent: true, run: () => ctx.schema.modify(ref, { section: "columns", add: true }) } : null,
@@ -474,6 +567,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
               },
             }
           : null,
+        n.kind === "procedure" ? { label: "Estatísticas de execução", icon: "fa-solid fa-gauge-high", run: perf(n.database, "top", { proc: { schema: n.schema, name: n.name } }) } : null,
         { label: "Copiar nome qualificado", icon: "fa-regular fa-clipboard", run: () => ctx.copy(ctx.dialect(conn).qualified(n.schema, n.name)) },
         "sep",
         { label: "Renomear…", icon: "fa-solid fa-i-cursor", run: () => ctx.schema.rename(objectRef(n)) },
@@ -555,7 +649,11 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     } else if (e.key === "ArrowRight" && cur) {
       e.preventDefault();
       if (expandable(cur) && !expanded.has(cur.key)) toggle(cur.key, true);
-      else if (cur.children?.length) select(cur.children[0]);
+      else if (kids(cur).length) select(kids(cur)[0]);
+    } else if (e.key === "Delete" && cur?.kind === "query") {
+      e.preventDefault();
+      const q = ctx.queries.get(cur.queryId);
+      if (q) ctx.queries.remove(q);
     } else if (e.key === "ArrowLeft" && cur) {
       e.preventDefault();
       if (expanded.has(cur.key)) toggle(cur.key, false);
@@ -579,8 +677,22 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     }
   }, on);
   // Arrastar uma conexão sobre outra: entra antes (metade de cima) ou depois (de baixo).
+  // Arrastar uma consulta salva sobre uma pasta/"consultas salvas"/banco: vai para dentro.
   let draggedConn = null;
-  const clearDrop = () => treeEl.querySelectorAll(".drop-before, .drop-after").forEach((r) => r.classList.remove("drop-before", "drop-after"));
+  let draggedQuery = null;
+  const clearDrop = () => treeEl.querySelectorAll(".drop-before, .drop-after, .drop-into").forEach((r) => r.classList.remove("drop-before", "drop-after", "drop-into"));
+  const queryDropAt = (e) => {
+    const row = e.target.closest(".dbx-row");
+    const n = row && nodes.get(row.dataset.key);
+    if (!n) return null;
+    if (n.kind === "qroot" || n.kind === "qfolder") return { row, connId: n.connId, database: n.database, folder: n.folder };
+    if (n.kind === "query") {
+      const parent = nodes.get(n.key.slice(0, n.key.lastIndexOf("/")));
+      return parent && { row: treeEl.querySelector(`.dbx-row[data-key="${CSS.escape(parent.key)}"]`) || row, connId: n.connId, database: n.database, folder: n.folder };
+    }
+    if (n.kind === "database") return { row, connId: n.connId, database: n.database, folder: "" };
+    return null;
+  };
   const connRowAt = (e) => {
     const row = e.target.closest(".dbx-row.k-conn");
     const n = row && nodes.get(row.dataset.key);
@@ -589,6 +701,13 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     return { row, n, after: e.clientY > r.top + r.height / 2 };
   };
   treeEl.addEventListener("dragstart", (e) => {
+    const qrow = e.target.closest(".dbx-row.k-query");
+    if (qrow) {
+      draggedQuery = nodes.get(qrow.dataset.key)?.queryId || null;
+      e.dataTransfer.setData("application/x-db-query", draggedQuery || "");
+      e.dataTransfer.effectAllowed = "move";
+      return;
+    }
     const row = e.target.closest(".dbx-row.k-conn");
     const n = row && nodes.get(row.dataset.key);
     if (!n) return;
@@ -598,9 +717,18 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
   }, on);
   treeEl.addEventListener("dragend", () => {
     draggedConn = null;
+    draggedQuery = null;
     clearDrop();
   }, on);
   treeEl.addEventListener("dragover", (e) => {
+    if (draggedQuery) {
+      const hit = queryDropAt(e);
+      clearDrop();
+      if (!hit) return;
+      e.preventDefault();
+      hit.row.classList.add("drop-into");
+      return;
+    }
     if (!draggedConn) return;
     const hit = connRowAt(e);
     clearDrop();
@@ -609,6 +737,16 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     hit.row.classList.add(hit.after ? "drop-after" : "drop-before");
   }, on);
   treeEl.addEventListener("drop", (e) => {
+    if (draggedQuery) {
+      const hit = queryDropAt(e);
+      const q = ctx.queries.get(draggedQuery);
+      clearDrop();
+      draggedQuery = null;
+      if (!hit || !q) return;
+      e.preventDefault();
+      ctx.queries.move(q, hit);
+      return;
+    }
     const hit = draggedConn && connRowAt(e);
     clearDrop();
     if (!hit) return;
@@ -651,5 +789,20 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
       schedule();
     },
     selectedNode: () => nodes.get(selected),
+    /** Abre "consultas salvas" (e as pastas) até a consulta e a seleciona, se o banco estiver na árvore. */
+    revealQuery(q) {
+      const db = [...nodes.values()].find((n) => n.kind === "database" && n.connId === q.conn_id && (n.database === q.database || (!q.database && n.current)));
+      if (!db) return schedule();
+      let key = `${db.key}/q`;
+      expanded.add(db.key);
+      expanded.add(key);
+      for (const part of q.folder ? q.folder.split("/") : []) {
+        key += `/qf:${encodeURIComponent(part)}`;
+        expanded.add(key);
+      }
+      persistExpanded();
+      flatten(); // monta os nós antes de selecionar
+      select(`${key}/qi:${q.id}`);
+    },
   };
 }
