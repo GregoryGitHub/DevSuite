@@ -33,7 +33,7 @@ async function codeBlockHtml(pre) {
   const source = pre.textContent.replace(/\n$/, "");
   if (lang === "mermaid") {
     try {
-      const svg = await renderMermaidSvg(source, "default");
+      const svg = await renderMermaidSvg(source, "light");
       return `<div class="np-diagram">${svg}</div>`;
     } catch (e) {
       return `<div class="np-code"><div class="np-code-err">${escapeHtml(mermaidErrorText(e))}</div><pre>${escapeHtml(source)}</pre></div>`;

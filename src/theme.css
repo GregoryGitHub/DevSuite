@@ -72,6 +72,9 @@
   --nt-selected: #fbe6a2;
   --nt-menu-bg: rgba(255, 255, 255, 0.97);
   --nt-menu-hl: #2f6fdc;
+  /* Blocos de código e diagramas das Notas: quase brancos (o cinza do escuro pesava no claro). */
+  --nt-code-bg: #fafafb;
+  --nt-code-border: rgba(0, 0, 0, 0.09);
 
   /* Realce de sintaxe (paleta do VS Code Light+) */
   --syn-key: #0451a5;

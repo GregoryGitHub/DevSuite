@@ -58,8 +58,9 @@ pub struct NoteMeta {
     /// Timestamp em milissegundos da última edição.
     #[serde(default)]
     pub updated_at: u64,
-    #[serde(default)]
-    pub pinned: bool,
+    /// Fixada: 0 = não; n > 0 = posição entre as fixadas (maior = mais acima). Aceita `bool` (JSON antigo).
+    #[serde(default, deserialize_with = "pin_order")]
+    pub pinned: u32,
     /// 0 = pasta padrão "Notas".
     #[serde(default)]
     pub folder_id: u64,
@@ -204,6 +205,15 @@ fn preview_of(text: &str) -> String {
         s.push('…');
     }
     s
+}
+
+/// `pinned` do JS: número (posição) ou `bool` (true = 1).
+fn pin_order<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Bool(b) => b as u32,
+        serde_json::Value::Number(n) => n.as_u64().map_or(0, |v| v.min(u32::MAX as u64) as u32),
+        _ => 0,
+    })
 }
 
 fn meta_row(r: &rusqlite::Row) -> rusqlite::Result<NoteMeta> {
@@ -822,9 +832,9 @@ mod tests {
         assert_eq!(search(&c, "Primeira").unwrap(), Vec::<u64>::new());
         assert_eq!(search(&c, "editad").unwrap(), vec![1]);
 
-        set_meta(&mut c, &[NoteMeta { id: 2, pinned: true, folder_id: 7, deleted_at: Some(9), updated_at: 10, ..Default::default() }]).unwrap();
+        set_meta(&mut c, &[NoteMeta { id: 2, pinned: 3, folder_id: 7, deleted_at: Some(9), updated_at: 10, ..Default::default() }]).unwrap();
         let two = list(&c, 10).unwrap().into_iter().find(|n| n.id == 2).unwrap();
-        assert!(two.pinned && two.folder_id == 7 && two.deleted_at == Some(9) && two.title == "Segunda");
+        assert!(two.pinned == 3 && two.folder_id == 7 && two.deleted_at == Some(9) && two.title == "Segunda");
         // HTML não é tocado por set_meta.
         assert_eq!(get_content(&c, 2).unwrap().as_deref(), Some("<p>Segunda</p>"));
 
@@ -974,9 +984,9 @@ mod tests {
         let got = list(&c, now_ms()).unwrap().remove(0);
         assert_eq!(got.props, n.meta.props);
         assert_eq!(got.links, n.meta.links);
-        set_meta(&mut c, &[NoteMeta { id: 1, pinned: true, updated_at: 3, ..Default::default() }]).unwrap();
+        set_meta(&mut c, &[NoteMeta { id: 1, pinned: 1, updated_at: 3, ..Default::default() }]).unwrap();
         let got = list(&c, now_ms()).unwrap().remove(0);
-        assert!(got.pinned);
+        assert_eq!(got.pinned, 1);
         assert_eq!(got.props, n.meta.props);
         assert_eq!(got.links, n.meta.links);
     }
@@ -988,6 +998,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(n.meta.id, 1);
+        assert_eq!(n.meta.pinned, 0);
+        let pinned: NoteMeta = serde_json::from_str(r#"{"id":1,"pinned":true}"#).unwrap();
+        assert_eq!(pinned.pinned, 1);
+        let pinned: NoteMeta = serde_json::from_str(r#"{"id":1,"pinned":4}"#).unwrap();
+        assert_eq!(pinned.pinned, 4);
         assert_eq!(n.images, vec!["a.png"]);
     }
 }

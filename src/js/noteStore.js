@@ -58,7 +58,7 @@ export function noteRecord(note) {
     preview: lines.slice(1).join(" "),
     created_at: note.created_at,
     updated_at: note.updated_at,
-    pinned: !!note.pinned,
+    pinned: note.pinned || 0,
     folder_id: note.folder_id ?? 0,
     deleted_at: note.deleted_at ?? null,
     content: note.content,
@@ -71,7 +71,7 @@ export function noteRecord(note) {
     // Diretório da nota: o da pasta (ou o atual, na lixeira) — define os caminhos das imagens.
     const trashDir = note.rel?.startsWith(`${TRASH_DIR}/`) ? dirOf(note.rel) : TRASH_DIR;
     const dir = note.deleted_at ? trashDir : folderDir(state.folders, record.folder_id);
-    record.markdown = noteToMarkdown(note.content, { title: record.title, props, created: note.created_at, dir, linkTitle: vaultCtx.linkTitle });
+    record.markdown = noteToMarkdown(note.content, { title: record.title, props, created: note.created_at, pinned: record.pinned, dir, linkTitle: vaultCtx.linkTitle });
     record.disk_mtime = note.disk_mtime ?? null;
   }
   return record;
@@ -80,7 +80,7 @@ export function noteRecord(note) {
 function metaOf(note) {
   return {
     id: note.id,
-    pinned: !!note.pinned,
+    pinned: note.pinned || 0,
     folder_id: note.folder_id ?? 0,
     deleted_at: note.deleted_at ?? null,
     updated_at: note.updated_at,
@@ -189,6 +189,23 @@ export function saveNoteContent(notes, onError) {
         note.vaultKey = key;
       },
       () => (note.dirty = true), // tenta de novo na próxima gravação
+    );
+  }
+}
+
+/**
+ * Fixar/desafixar/reordenar. No cofre a posição vai no front-matter (`pinned:`, vale para todos
+ * que abrem o cofre), então o .md é regravado; no banco local basta o metadado.
+ */
+export function saveNotePins(notes, onError) {
+  if (!isVault()) return saveNoteMeta(notes, onError);
+  for (const note of notes) {
+    ensureContent(note).then(
+      () => {
+        note.dirty = true;
+        saveNoteContent([note], onError);
+      },
+      (e) => onError?.(String(e)),
     );
   }
 }

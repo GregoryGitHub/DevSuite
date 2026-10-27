@@ -102,7 +102,7 @@ function findIn(data, wanted, { trash = false } = {}) {
   return pick(notes, wanted, { what: "nota", name: titleIn(data), label: (n) => `${titleIn(data)(n)} [${folderIn(data, n.folder_id)}]` });
 }
 
-const sortNotes = (a, b) => (a.pinned !== b.pinned ? (a.pinned ? -1 : 1) : b.updated_at - a.updated_at);
+const sortNotes = (a, b) => (b.pinned || 0) - (a.pinned || 0) || b.updated_at - a.updated_at;
 
 // ---------- Conteúdo ----------
 

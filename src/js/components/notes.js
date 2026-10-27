@@ -9,6 +9,7 @@ import {
   ensureContent,
   saveNoteContent,
   saveNoteMeta,
+  saveNotePins,
   saveNotesBulk,
   deleteNotes,
   saveFolders as saveFoldersStore,
@@ -61,6 +62,7 @@ const backLabelEl = document.getElementById("nt-back-label");
 const searchInputs = [document.getElementById("nt-search-desktop"), document.getElementById("nt-search-compact")];
 const editorScrollEl = document.getElementById("nt-editor-scroll");
 const editorDateEl = document.getElementById("nt-editor-date");
+const navBackBtn = document.getElementById("nt-nav-back");
 const editorEmptyEl = document.getElementById("nt-editor-empty");
 const trashBannerEl = document.getElementById("nt-trash-banner");
 const popoverEl = document.getElementById("nt-format-popover");
@@ -86,11 +88,13 @@ let graphLoading = null;
 let graphReturnScope = "all"; // escopo de onde se abriu o grafo
 let graphShowLocal = null; // modo pedido na próxima abertura (null = o último usado)
 let draggedFolderId = null; // pasta sendo arrastada na barra lateral
+let draggedNoteId = null; // nota sendo arrastada (reordenar as fixadas)
 let gitPanel = null; // noteGit.js (painel Git da barra lateral, modo cofre)
 let diffView = null; // diffView.js (ocupa a lista + o editor enquanto aberto)
 let diffOpen = false;
 const navBack = []; // Alt+← / Alt+→ entre notas abertas por link
 const navForward = [];
+let navArrival = null; // nota aberta por link (ou Alt+←/→): mostra a seta de voltar ao lado do título
 
 const MD_FILTERS = [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd", "txt"] }];
 
@@ -305,6 +309,7 @@ function openLinkedNote(id) {
   navBack.push(currentLocation());
   if (navBack.length > 60) navBack.shift();
   navForward.length = 0;
+  navArrival = id;
   revealNote(id);
 }
 
@@ -326,6 +331,7 @@ function navigate(delta) {
   const loc = from.pop();
   if (!loc) return false;
   to.push(currentLocation());
+  navArrival = loc.id;
   restoreLocation(loc);
   return true;
 }
@@ -407,6 +413,11 @@ function matchesQuery(n, q) {
   return !!searchHits?.has(n.id);
 }
 
+/** Fixadas primeiro (maior posição = mais acima), depois a última edição. */
+function byPin(a, b) {
+  return (b.pinned || 0) - (a.pinned || 0) || b.updated_at - a.updated_at;
+}
+
 function visibleNotes() {
   const q = ui.query.trim();
   const inTrash = ui.scope === "trash";
@@ -423,8 +434,7 @@ function visibleNotes() {
   }
   return list.sort((a, b) => {
     if (inTrash) return b.deleted_at - a.deleted_at;
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.updated_at - a.updated_at;
+    return byPin(a, b);
   });
 }
 
@@ -521,7 +531,7 @@ function newNoteObject(content, folderId, props = null, { time = Date.now(), cre
     content,
     created_at: new Date(createdAt).toISOString(),
     updated_at: time,
-    pinned: false,
+    pinned: 0,
     folder_id: folderId,
     deleted_at: null,
     props: zk() ? { ...normalizeProps(props), zid } : props,
@@ -867,7 +877,7 @@ async function snapshotLocalNotes(vaultPath) {
   const sep = vaultPath.includes("\\") ? "\\" : "/";
   if (names.size) await exportNoteImagesApi([...names], `${vaultPath}${sep}${ATTACHMENTS_DIR}`, true);
   return {
-    notes: notes.map((n) => ({ ...n, pinned: false, dirty: true, saved: false, rel: undefined, disk_mtime: undefined, vaultKey: undefined })),
+    notes: notes.map((n) => ({ ...n, dirty: true, saved: false, rel: undefined, disk_mtime: undefined, vaultKey: undefined })),
     folders: state.folders.map((f) => ({ ...f })),
   };
 }
@@ -1013,7 +1023,7 @@ function deleteNote(id) {
     deleteNotes([note], storeError);
   } else {
     note.deleted_at = Date.now();
-    note.pinned = false;
+    if (!isVault()) note.pinned = 0; // no cofre fica no front-matter: volta fixada ao restaurar
     saveNoteMeta([note], storeError);
   }
   notesChanged();
@@ -1052,8 +1062,28 @@ function restoreNote(id) {
 function togglePin(id) {
   const note = findNote(id);
   if (!note || note.deleted_at) return;
-  note.pinned = !note.pinned;
-  saveNoteMeta([note], storeError);
+  // Nova fixada entra no topo das fixadas.
+  note.pinned = note.pinned ? 0 : Math.max(0, ...state.notes.filter((n) => !n.deleted_at).map((n) => n.pinned || 0)) + 1;
+  saveNotePins([note], storeError);
+  renderNotes();
+}
+
+/** Arrastar entre as fixadas: põe `id` antes (ou depois) de `targetId` e renumera só o necessário. */
+function reorderPinned(id, targetId, after) {
+  const pinned = state.notes.filter((n) => n.pinned && !n.deleted_at).sort(byPin);
+  const note = pinned.find((n) => n.id === id);
+  if (!note || id === targetId || !pinned.some((n) => n.id === targetId)) return;
+  pinned.splice(pinned.indexOf(note), 1);
+  pinned.splice(pinned.findIndex((n) => n.id === targetId) + (after ? 1 : 0), 0, note);
+  const changed = [];
+  pinned.forEach((n, i) => {
+    const order = pinned.length - i;
+    if (n.pinned !== order) {
+      n.pinned = order;
+      changed.push(n);
+    }
+  });
+  if (changed.length) saveNotePins(changed, storeError);
   renderNotes();
 }
 
@@ -1112,7 +1142,7 @@ function deleteFolder(id) {
   for (const n of state.notes) {
     if (gone.has(n.folder_id) && !n.deleted_at) {
       n.deleted_at = now;
-      n.pinned = false;
+      if (!isVault()) n.pinned = 0;
       moved.push(n);
     }
   }
@@ -1178,7 +1208,7 @@ function renderFolders() {
     folderId: f.id,
     name: f.name,
     // Pasta aberta = tem subpastas e está expandida.
-    icon: hasChildren && !collapsedFolders.has(f.id) ? "fa-regular fa-folder-open" : "fa-regular fa-folder",
+    icon: hasChildren && !collapsedFolders.has(f.id) ? "fa-solid fa-folder-open" : "fa-solid fa-folder",
     count: counts.get(f.id) || 0,
     editable: f.id !== 0,
     depth,
@@ -1186,7 +1216,7 @@ function renderFolders() {
   });
 
   const entries = [
-    { scope: "all", name: "Todas as Notas", icon: "fa-regular fa-folder-open", count: active.length },
+    { scope: "all", name: "Todas as Notas", icon: "fa-solid fa-folder-open", count: active.length },
     ...(zk() ? [{ scope: "graph", name: "Grafo", icon: "fa-solid fa-circle-nodes", count: "" }] : []),
     folderEntry({ folder: DEFAULT_FOLDER, depth: 0, hasChildren: false }),
     ...flattenTree(state.folders, collapsedFolders).map(folderEntry),
@@ -1340,7 +1370,7 @@ function renderListItem(note, showFolder) {
 
   const title = document.createElement("div");
   title.className = "nt-item-title";
-  if (note.pinned) {
+  if (note.pinned && !note.deleted_at) {
     const pin = document.createElement("i");
     pin.className = "fa-solid fa-thumbtack nt-item-pin";
     title.appendChild(pin);
@@ -1379,6 +1409,32 @@ function renderListItem(note, showFolder) {
   item.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("application/x-note-id", String(note.id));
     e.dataTransfer.effectAllowed = "move";
+    draggedNoteId = note.id;
+  });
+  item.addEventListener("dragend", () => (draggedNoteId = null));
+  // Reordenar as fixadas: soltar sobre outra fixada (metade de cima = antes).
+  const pinnedHere = () => {
+    const dragged = draggedNoteId !== null && findNote(draggedNoteId);
+    return !!(note.pinned && !note.deleted_at && dragged?.pinned && !dragged.deleted_at && dragged.id !== note.id);
+  };
+  const after = (e) => {
+    const r = item.getBoundingClientRect();
+    return e.clientY > r.top + r.height / 2;
+  };
+  const clearDrop = () => item.classList.remove("drop-before", "drop-after");
+  item.addEventListener("dragover", (e) => {
+    if (!pinnedHere()) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    clearDrop();
+    item.classList.add(after(e) ? "drop-after" : "drop-before");
+  });
+  item.addEventListener("dragleave", clearDrop);
+  item.addEventListener("drop", (e) => {
+    if (!pinnedHere()) return;
+    e.preventDefault();
+    clearDrop();
+    reorderPinned(draggedNoteId, note.id, after(e));
   });
   return item;
 }
@@ -1403,7 +1459,7 @@ function renderList() {
     const label =
       ui.scope === "trash"
         ? noteGroupLabel(note.deleted_at)
-        : note.pinned
+        : note.pinned && !note.deleted_at
           ? "Fixadas"
           : noteGroupLabel(note.updated_at);
     if (label !== groupLabel) {
@@ -1452,6 +1508,26 @@ function renderChrome() {
   appEl.querySelectorAll('[data-action="graph-local"]').forEach((btn) => (btn.disabled = !note || !!note.deleted_at));
   renderStorageLabel();
   syncGraph();
+  renderNavBack();
+}
+
+/** Seta de voltar ao lado do título: só na nota a que se chegou por link e com para onde voltar. */
+function renderNavBack() {
+  if (navArrival !== ui.selectedId) navArrival = null;
+  navBackBtn.hidden = !(state.desktopMode && navArrival !== null && navBack.length && ui.scope !== "graph");
+  placeNavBack();
+}
+
+/** Na margem à esquerda da 1ª linha do título, por cima do conteúdo (não desloca nada). */
+function placeNavBack() {
+  if (navBackBtn.hidden) return;
+  const editor = document.getElementById("nt-editor");
+  const title = editor.firstElementChild || editor;
+  const s = editorScrollEl.getBoundingClientRect();
+  const t = title.getBoundingClientRect();
+  const line = Math.min(parseFloat(getComputedStyle(title).lineHeight) || t.height, t.height || Infinity);
+  navBackBtn.style.top = `${t.top - s.top + editorScrollEl.scrollTop + (line - navBackBtn.offsetHeight) / 2}px`;
+  navBackBtn.style.left = `${Math.max(2, t.left - s.left - navBackBtn.offsetWidth - 8)}px`;
 }
 
 /** "No Meu PC" (notes.db) ou o nome do cofre, com o caminho no tooltip. */
@@ -1682,6 +1758,7 @@ function loadSelectedIntoEditor({ focus = false } = {}) {
     renderEditorDate(note); // libera a data de criação (conteúdo carregado)
     renderPropsPanel();
     renderLinksPanel();
+    placeNavBack();
   };
   if (note.content !== undefined) return open();
   // HTML comes from notes.db the first time the note is opened.
@@ -1710,6 +1787,7 @@ function handleEditorInput(html) {
   }
   if (linksChanged) queueLinksPanel();
   propsPanel?.place(); // o título (1º bloco) pode ter mudado de altura, inclusive ao desfazer
+  placeNavBack();
   if (ensureZid(note)) renderPropsPanel();
   saveNotesSoon();
   queueListRender();
@@ -2031,6 +2109,8 @@ export function initNotes() {
     tags: () => tagCounts(state.notes),
     onTagClick: openTagSearch,
   });
+  navBackBtn.addEventListener("click", () => navigate(-1));
+  new ResizeObserver(placeNavBack).observe(editorScrollEl);
   linksPanel = createLinksPanel(document.getElementById("nt-backlinks"), {
     open: openLinkedNote,
     create: (title) => openLinkedNote(createLinkedNote(title)),

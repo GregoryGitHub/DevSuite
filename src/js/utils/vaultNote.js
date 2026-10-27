@@ -94,7 +94,7 @@ export function vaultLookupIndex(files, noteRels = []) {
  * HTML da nota -> conteúdo do arquivo .md. `dir` = diretório da nota no cofre (caminhos das
  * imagens); `linkTitle(a)` = título atual de um link [[ ]].
  */
-export function noteToMarkdown(html, { title = "", props = null, created = null, dir = "", linkTitle = () => "" } = {}) {
+export function noteToMarkdown(html, { title = "", props = null, created = null, pinned = 0, dir = "", linkTitle = () => "" } = {}) {
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
   const first = tpl.content.firstElementChild;
@@ -118,7 +118,7 @@ export function noteToMarkdown(html, { title = "", props = null, created = null,
     },
     linkTitle,
   });
-  return propsToYaml(props, { created }) + (body.trim() ? body : "");
+  return propsToYaml(props, { created, pinned }) + (body.trim() ? body : "");
 }
 
 /**
@@ -151,11 +151,12 @@ export function markdownToNote(md, rel, index = null) {
   };
 }
 
-/** Metadados vindos do cofre: o front-matter cru vira `props` e `created_at`. */
+/** Metadados vindos do cofre: o front-matter cru vira `props`, `created_at` e `pinned` (vale para todos). */
 export function vaultMeta(m) {
-  const { props, created } = m.front_matter ? parseFrontMatter(m.front_matter) : { props: null, created: null };
+  const { props, created, pinned } = m.front_matter ? parseFrontMatter(m.front_matter) : { props: null, created: null, pinned: 0 };
   return {
     ...m,
+    pinned,
     props: props && !propsEmpty(props) ? props : null,
     created_at: created !== null ? new Date(created).toISOString() : m.created_at,
   };

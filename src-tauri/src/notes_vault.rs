@@ -9,8 +9,8 @@
 //! (`<app_data>/vaults/<hash do caminho>.db`, nunca no cofre): caminho <-> id estável, mtime,
 //! título, prévia, front-matter, links e texto da busca (FTS5 trigram). Ele é só um cache:
 //! `scan` compara mtime/tamanho com o disco e relê o que mudou (renomeação externa = arquivo
-//! sumido + arquivo novo com o mesmo conteúdo, mantém o id). "Fixada" fica só no índice
-//! (preferência de cada usuário, não suja a pasta compartilhada).
+//! sumido + arquivo novo com o mesmo conteúdo, mantém o id). "Fixada" fica no front-matter
+//! (`pinned: <posição>`), então vale para todos que abrem o cofre; o índice só copia.
 //!
 //! Gravação: temporário oculto no mesmo diretório + rename (atômico também em SMB). Se o
 //! arquivo mudou no disco desde a última leitura, nada é sobrescrito: a versão do app vai
@@ -228,6 +228,23 @@ struct Derived {
     plain: String,
     front_matter: String,
     links: String,
+    pinned: u32,
+}
+
+/// `pinned:` do front-matter (a verdade no cofre): `true` = 1, número = posição entre as fixadas.
+pub fn fm_pinned(fm: &str) -> u32 {
+    for line in fm.lines() {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        if line.starts_with(char::is_whitespace) || !k.trim().eq_ignore_ascii_case("pinned") {
+            continue;
+        }
+        let v = v.split(" #").next().unwrap_or("").trim().trim_matches(['"', '\'']).to_lowercase();
+        return match v.as_str() {
+            "true" | "yes" | "sim" => 1,
+            _ => v.parse::<u32>().unwrap_or(0),
+        };
+    }
+    0
 }
 
 fn derive(rel: &str, text: &str) -> Derived {
@@ -250,6 +267,7 @@ fn derive(rel: &str, text: &str) -> Derived {
         plain,
         front_matter: fm.unwrap_or("").to_string(),
         links: if links.is_empty() { String::new() } else { serde_json::Value::Array(links).to_string() },
+        pinned: fm.map_or(0, fm_pinned),
     }
 }
 
@@ -575,11 +593,11 @@ impl Vault {
                 sql(tx.execute(
                     "UPDATE files SET mtime = ?2, size = ?3, hash = ?4, title = ?5, preview = ?6, plain = ?7, front_matter = ?8,
                        links = ?9, updated_at = ?10, folder_id = COALESCE(?11, folder_id),
-                       deleted_at = CASE WHEN ?12 IS NULL THEN NULL ELSE COALESCE(deleted_at, ?12) END
+                       deleted_at = CASE WHEN ?12 IS NULL THEN NULL ELSE COALESCE(deleted_at, ?12) END, pinned = ?13
                      WHERE id = ?1",
                     params![
                         row.id as i64, f.mtime as i64, f.size as i64, hash, d.title, d.preview, d.plain, d.front_matter, d.links,
-                        f.mtime as i64, folder_id.map(|v| v as i64), deleted_at
+                        f.mtime as i64, folder_id.map(|v| v as i64), deleted_at, d.pinned
                     ],
                 ))?;
                 changed_ids.push(row.id);
@@ -598,11 +616,11 @@ impl Vault {
                 }
             };
             sql(tx.execute(
-                "INSERT INTO files (id, rel, mtime, size, hash, title, preview, plain, front_matter, links, created_at, updated_at, folder_id, deleted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                "INSERT INTO files (id, rel, mtime, size, hash, title, preview, plain, front_matter, links, created_at, updated_at, folder_id, deleted_at, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     id as i64, f.rel, f.mtime as i64, f.size as i64, hash, d.title, d.preview, d.plain, d.front_matter, d.links, created,
-                    f.mtime as i64, folder_id.unwrap_or(0) as i64, deleted_at
+                    f.mtime as i64, folder_id.unwrap_or(0) as i64, deleted_at, d.pinned
                 ],
             ))?;
             changed_ids.push(id);
@@ -808,7 +826,7 @@ impl Vault {
         Ok((rel, mtime))
     }
 
-    /// Fixar (só no índice), mover de pasta, mandar para a lixeira e restaurar.
+    /// Fixar (no índice; o JS grava `pinned:` no front-matter pelo `save`), mover de pasta, mandar para a lixeira e restaurar.
     pub fn set_meta(&mut self, metas: &[NoteMeta]) -> Res<()> {
         for m in metas {
             let Some(row) = self.row(m.id)? else { continue };
@@ -1015,6 +1033,10 @@ mod tests {
         assert!(body.starts_with("# T"));
         assert_eq!(md_links(body), vec![serde_json::json!("Outra"), serde_json::json!("Nota")]);
         assert_eq!(split_front_matter("sem").0, None);
+        assert_eq!(fm_pinned("tags: [a]\npinned: true"), 1);
+        assert_eq!(fm_pinned("Pinned: 7 # ordem"), 7);
+        assert_eq!(fm_pinned("extra:\n  pinned: 3"), 0);
+        assert_eq!(fm_pinned("pinned: false"), 0);
     }
 
     #[test]

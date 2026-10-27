@@ -74,6 +74,11 @@ const wikiAgain = z.parseFrontMatter(z.splitFrontMatter(wikiYaml).yaml);
 assert.deepEqual(wikiAgain.props, wiki.props);
 assert.equal(wikiAgain.created, wiki.created);
 assert.equal(z.propsToYaml(null, { created: "2026-01-02T10:00:00" }), "---\ncreated: 2026-01-02\n---\n");
+assert.equal(z.propsToYaml(null, { created: "2026-01-02T10:00:00", pinned: 3 }), "---\ncreated: 2026-01-02\npinned: 3\n---\n");
+assert.equal(z.propsToYaml(null, { pinned: 0 }), "");
+assert.equal(z.parseFrontMatter("pinned: 3\nfoo: bar").pinned, 3);
+assert.deepEqual(z.parseFrontMatter("pinned: 3\nfoo: bar").props.extra, { foo: "bar" });
+assert.equal(z.parseFrontMatter("pinned: false").pinned, 0);
 
 // Datas aceitas; inválidas ficam como campo livre.
 assert.equal(z.parseNoteDate("18/11/2025"), new Date(2025, 10, 18).getTime());

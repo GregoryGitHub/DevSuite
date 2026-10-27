@@ -31,11 +31,42 @@ function loadMermaid() {
   return loading;
 }
 
-const currentTheme = () => (document.documentElement.dataset.theme === "light" ? "default" : "dark");
+const currentTheme = () => (document.documentElement.dataset.theme === "light" ? "light" : "dark");
+
+// Tema claro próprio (base do Mermaid): nós brancos com borda âmbar suave, grupos quase
+// brancos e linhas cinza, no lugar do lilás/amarelo do tema "default".
+const LIGHT_VARS = {
+  background: "#ffffff",
+  primaryColor: "#ffffff",
+  primaryBorderColor: "#d9c48f",
+  primaryTextColor: "#1d1d1f",
+  secondaryColor: "#f4f6fa",
+  secondaryBorderColor: "#c9d2e0",
+  secondaryTextColor: "#1d1d1f",
+  tertiaryColor: "#fafafb",
+  tertiaryBorderColor: "#e3e3e8",
+  tertiaryTextColor: "#1d1d1f",
+  mainBkg: "#ffffff",
+  nodeBorder: "#d9c48f",
+  clusterBkg: "#fafafb",
+  clusterBorder: "#e3e3e8",
+  titleColor: "#3a3a3c",
+  lineColor: "#9a9aa2",
+  textColor: "#1d1d1f",
+  edgeLabelBackground: "#ffffff",
+  noteBkgColor: "#fff8e1",
+  noteBorderColor: "#e6cf8a",
+  noteTextColor: "#3a3a3c",
+  actorBkg: "#ffffff",
+  actorBorder: "#d9c48f",
+  signalColor: "#6e6e73",
+  labelBoxBkgColor: "#fafafb",
+  labelBoxBorderColor: "#e3e3e8",
+};
 
 /**
  * SVG do diagrama (as renderizações rodam uma por vez: o Mermaid não é reentrante).
- * theme: tema do Mermaid ("default" | "dark"); por padrão o da interface (o PDF usa sempre "default").
+ * theme: "light" | "dark"; por padrão o da interface (o PDF usa sempre "light").
  */
 export function renderMermaidSvg(source, theme = currentTheme()) {
   const key = `${theme}\0${source}`;
@@ -49,7 +80,7 @@ export function renderMermaidSvg(source, theme = currentTheme()) {
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: "strict",
-        theme,
+        ...(theme === "light" ? { theme: "base", themeVariables: { ...LIGHT_VARS, fontFamily } } : { theme: "dark" }),
         suppressErrorRendering: true,
         fontFamily,
       });

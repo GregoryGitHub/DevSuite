@@ -53,6 +53,11 @@ assert.equal(meta.created_at.slice(0, 10), "2024-03-05");
 assert.equal(v.vaultMeta({ id: 2, created_at: "x", front_matter: "" }).props, null);
 assert.equal(v.vaultMeta({ id: 2, created_at: "x", front_matter: "" }).created_at, "x");
 
+// --- fixada: o front-matter é a verdade (vale para todos que abrem o cofre)
+assert.equal(v.vaultMeta({ id: 3, pinned: 5, front_matter: "tags: [a]" }).pinned, 0);
+assert.equal(v.vaultMeta({ id: 3, front_matter: "pinned: 4" }).pinned, 4);
+assert.equal(v.vaultMeta({ id: 3, front_matter: "Pinned: true" }).pinned, 1);
+
 // --- lista de cofres (troca rápida na barra lateral)
 const W = (p) => p.replace(/\//g, "\\"); // caminhos do Windows sem escapes
 assert.ok(v.sameVaultPath(W("C:/Notas/"), W("c:/notas")));

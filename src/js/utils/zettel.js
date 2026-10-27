@@ -170,13 +170,14 @@ const yamlScalar = (v) => (YAML_PLAIN.test(v) && !/^(true|false|null|yes|no|~)$/
  * Propriedades -> bloco "---\n...\n---\n" (vazio se não houver nada). `created` = data de
  * criação da nota (ISO/timestamp), escrita como `created: AAAA-MM-DD`.
  */
-export function propsToYaml(p, { created = null } = {}) {
+export function propsToYaml(p, { created = null, pinned = 0 } = {}) {
   const n = normalizeProps(p);
   const day = created ? dateOnly(created) : "";
-  if (propsEmpty(n) && !day) return "";
+  if (propsEmpty(n) && !day && !pinned) return "";
   const out = ["---"];
   if (n.zid) out.push(`id: ${yamlScalar(n.zid)}`);
   if (day) out.push(`created: ${day}`);
+  if (pinned) out.push(`pinned: ${pinned}`);
   const list = (key, items) => {
     if (!items.length) return;
     out.push(`${key}:`);
@@ -226,7 +227,15 @@ const CREATED_KEYS = new Set([
   "created", "createdat", "createdon", "creationdate", "datecreated", "date", "data", "datacriacao", "datadecriacao",
   "criado", "criadoem", "criacao", "criadaem",
 ]);
+const PINNED_KEYS = new Set(["pinned", "fixada", "fixado"]);
 const keyOf = (k) => fold(k).replace(/[^a-z0-9]/g, "");
+
+/** `pinned:` do front-matter: true = 1, número = posição entre as fixadas (maior = mais acima). */
+function pinOrder(v) {
+  const s = String(Array.isArray(v) ? v[0] ?? "" : v).trim().toLowerCase();
+  if (s === "true" || s === "yes" || s === "sim") return 1;
+  return /^\d+$/.test(s) ? Math.min(Number(s), 0xffffffff) : 0;
+}
 
 /** Texto YAML (sem os ---) -> propriedades. Chaves desconhecidas vão para `extra`. */
 export function yamlToProps(text) {
@@ -234,8 +243,9 @@ export function yamlToProps(text) {
 }
 
 /**
- * Texto YAML (sem os ---) -> { props, created }. `created` = timestamp da data de criação
- * (created, date, "Data criação"...; null se ausente/ilegível — aí a chave fica em `extra`).
+ * Texto YAML (sem os ---) -> { props, created, pinned }. `created` = timestamp da data de criação
+ * (created, date, "Data criação"...; null se ausente/ilegível — aí a chave fica em `extra`);
+ * `pinned` = posição entre as fixadas (0 = não fixada).
  */
 export function parseFrontMatter(text) {
   const raw = {};
@@ -261,15 +271,17 @@ export function parseFrontMatter(text) {
   }
   const props = { extra: {} };
   let created = null;
+  let pinned = 0;
   for (const [k, v] of Object.entries(raw)) {
     const key = keyOf(k);
     const mapped = KEY_MAP[key];
-    if (mapped === "tags" || mapped === "aliases") props[mapped] = Array.isArray(v) ? v : String(v).split(",");
+    if (PINNED_KEYS.has(key)) pinned = pinOrder(v);
+    else if (mapped === "tags" || mapped === "aliases") props[mapped] = Array.isArray(v) ? v : String(v).split(",");
     else if (mapped) props[mapped] = Array.isArray(v) ? v.join(", ") : v;
     else if (CREATED_KEYS.has(key) && created === null && (created = parseNoteDate(v)) !== null) continue;
     else props.extra[k] = Array.isArray(v) ? v.join(", ") : v;
   }
-  return { props: normalizeProps(props), created };
+  return { props: normalizeProps(props), created, pinned };
 }
 
 /** Separa o front-matter do corpo de um Markdown: { yaml (ou null), body }. */
