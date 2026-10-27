@@ -58,6 +58,10 @@ async fn client_for(cfg: &ConnConfig, password: &str) -> DbResult<Client> {
     opts.app_name = Some("Dev Suite".into());
     opts.connect_timeout = Some(timeout);
     opts.server_selection_timeout = Some(timeout);
+    // Cosmos DB (RU) não aceita retryable writes; com o padrão do driver as escritas falham.
+    if opts.retry_writes.is_none() && opts.hosts.iter().any(|h| h.to_string().contains(".mongo.cosmos.azure.com")) {
+        opts.retry_writes = Some(false);
+    }
     if !password.is_empty() {
         match opts.credential.as_mut() {
             Some(c) => c.password = Some(password.to_string()),

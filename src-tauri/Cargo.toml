@@ -1,6 +1,6 @@
 [package]
 name = "todo-rs"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 description = "Lightweight todo list running in the Windows tray"
 
@@ -64,5 +64,11 @@ strip = true
 # tiberius 0.13 com patch mínimo (vendor/tiberius, marcado "TodoRS patch"): expõe a contagem
 # de cada comando (DONE + CurCmd) no QueryStream para "(N) registro(s) afetado(s)".
 # Ao atualizar o tiberius, reaplicar o patch ou remover se a versão nova expuser isso.
+#
+# mongodb 3.9.1 com patch mínimo (vendor/mongodb, marcado "TodoRS patch"): aceita servidores
+# MongoDB 3.6+ (wire 6), como o Azure Cosmos DB API 3.6; o upstream exige 4.4 (wire 9).
+# Inclui a rodada final vazia do SCRAM, que servidores < 4.4 exigem (auth/scram.rs).
+# Ao atualizar o mongodb, copiar a versão nova para vendor/ e reaplicar o patch.
 [patch.crates-io]
 tiberius = { path = "vendor/tiberius" }
+mongodb = { path = "vendor/mongodb" }

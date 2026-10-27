@@ -209,6 +209,7 @@ todo-rs/
         │   ├── analyze.rs     # Análise de memória (SCAN + TYPE/MEMORY USAGE/PTTL): tipo, prefixo, TTL, maiores chaves
         │   └── it_tests.rs    # Integração (TODORS_REDIS_TEST, _CLUSTER_TEST, _SENTINEL_TEST, _SSH_TEST)
         ├── (vendor/tiberius)  # tiberius 0.13 com patch "TodoRS patch" (contagem por comando e mensagens INFO); ver [patch.crates-io]
+        ├── (vendor/mongodb)   # mongodb 3.9.1 com "TodoRS patch": aceita MongoDB 3.6+ (wire 6, ex.: Cosmos DB API 3.6) e a rodada final vazia do SCRAM
         └── db/                # Cliente de banco de dados (aba Banco)
             ├── mod.rs         # Comandos Tauri, sessões (session_id) e cancelamento
             ├── driver.rs      # Traits Driver/Session + tipos neutros (ColumnMeta, ExecEvent, ObjectNode, TableInfo)
@@ -433,7 +434,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 
 8. **Banco de Dados (cópia do DataGrip)**:
    - **Registros afetados**: toda escrita mostra "(N) registro(s) afetado(s)" na Saída do console e no log (`affectedText`). No SQL Server a contagem vem do DONE de cada comando filtrado por tipo (INSERT/UPDATE/DELETE/MERGE), via `simple_query_counted` do tiberius vendorizado — exata em qualquer script (transação, variáveis, CTE), sem contar SELECT nem atribuições. No MongoDB vem de inserted/modified/deleted.
-   - **MongoDB** (driver `mongo`): connection string (Atlas `mongodb+srv://`, servidor/replica set, Azure Cosmos DB) salva SEM a senha (vai para o cofre). Console em sintaxe do mongosh (`mongoShell.js` → operação JSON → `mongo.rs`); grid com campos de topo como colunas (descobertas no streaming), campo ausente ≠ NULL, edição preserva o tipo BSON original (long, double, Decimal128, ObjectId, datas). Gravação por `_id`, em ordem e sem transação. Views são somente leitura.
+   - **MongoDB** (driver `mongo`): connection string (Atlas `mongodb+srv://`, servidor/replica set, Azure Cosmos DB) salva SEM a senha (vai para o cofre). Console em sintaxe do mongosh (`mongoShell.js` → operação JSON → `mongo.rs`); grid com campos de topo como colunas (descobertas no streaming), campo ausente ≠ NULL, edição preserva o tipo BSON original (long, double, Decimal128, ObjectId, datas). Gravação por `_id`, em ordem e sem transação. Views são somente leitura. Servidores 3.6+ (o driver vendorizado aceita wire 6; o upstream exige 4.4); host `*.mongo.cosmos.azure.com` sem `retryWrites` na string = `retry_writes` desligado.
    - SQL Server e Azure SQL (driver `tiberius`, TLS rustls). Auth: login SQL ou Microsoft Entra interativo/MFA. Senhas e tokens NUNCA vão para JSON (cofre do sistema via `keyring`).
    - Novo banco = implementar `Driver`/`Session` em `src-tauri/src/db/` + um dialeto em `sqlDialect.js`. O frontend só conhece `ColumnMeta.kind` (int, num, dec, bool, str, date, time, datetime, guid, bin, xml, other).
    - Valores sem perder precisão: bigint fora do intervalo seguro, decimal/money e datas chegam como string; binário como `0x…` (truncado em 4 KB → somente leitura).
