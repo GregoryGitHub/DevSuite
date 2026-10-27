@@ -1,6 +1,6 @@
 [package]
 name = "devsuite-cli"
-version = "1.2.2"
+version = "1.2.3"
 edition = "2021"
 description = "CLI do Dev Suite: notas, tarefas, HTTP, bancos de dados e RabbitMQ pela linha de comando"
 

@@ -2573,3 +2573,19 @@ body.md-preview .nt-editor-scroll:focus {
 .nt-item.drop-after {
   box-shadow: inset 0 -2px 0 var(--nt-yellow);
 }
+
+/* Largura da barra lateral: alça na borda direita (notes.js, initSidebarResize). A borda da
+   lista já desenha a linha; a alça só aparece ao passar o mouse/arrastar. */
+.nt-sb-split {
+  margin: 0 -3px 0 -2px;
+}
+
+.nt-sb-split::after {
+  background: transparent;
+}
+
+body:not(.desktop-mode) .nt-sb-split,
+.notes-app.sidebar-hidden .nt-sb-split,
+body.md-window .nt-sb-split {
+  display: none;
+}

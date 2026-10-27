@@ -1207,8 +1207,8 @@ function renderFolders() {
     scope: `f:${f.id}`,
     folderId: f.id,
     name: f.name,
-    // Pasta aberta = tem subpastas e está expandida.
-    icon: hasChildren && !collapsedFolders.has(f.id) ? "fa-solid fa-folder-open" : "fa-solid fa-folder",
+    // Pasta aberta = a selecionada, ou tem subpastas e está expandida.
+    icon: ui.scope === `f:${f.id}` || (hasChildren && !collapsedFolders.has(f.id)) ? "fa-solid fa-folder-open" : "fa-solid fa-folder",
     count: counts.get(f.id) || 0,
     editable: f.id !== 0,
     depth,
@@ -1570,6 +1570,52 @@ function closeDiff({ render = true } = {}) {
     renderChrome();
     gitPanel?.selectionChanged();
   }
+}
+
+// Largura da barra lateral (pastas + controle de versão), arrastando a borda; fica no localStorage.
+const SIDEBAR_W_KEY = "nt-sidebar-w";
+const sidebarWidth = (w) => Math.round(Math.min(Math.max(w, 220), Math.max(220, Math.min(640, window.innerWidth * 0.5))));
+
+function initSidebarResize() {
+  const split = document.getElementById("nt-sb-split");
+  const sidebar = split.previousElementSibling;
+  const apply = (w) => appEl.style.setProperty("--nt-sb-w", `${sidebarWidth(w)}px`);
+  let saved = 0;
+  try {
+    saved = Number(localStorage.getItem(SIDEBAR_W_KEY)) || 0;
+  } catch {}
+  if (saved) apply(saved);
+  split.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const start = sidebar.getBoundingClientRect().width;
+    let value = start;
+    split.setPointerCapture(e.pointerId);
+    document.body.classList.add("db-resizing-x");
+    const move = (ev) => {
+      value = sidebarWidth(start + ev.clientX - startX);
+      apply(value);
+    };
+    const up = () => {
+      split.removeEventListener("pointermove", move);
+      split.removeEventListener("pointerup", up);
+      split.removeEventListener("pointercancel", up);
+      document.body.classList.remove("db-resizing-x");
+      try {
+        localStorage.setItem(SIDEBAR_W_KEY, String(value));
+      } catch {}
+    };
+    split.addEventListener("pointermove", move);
+    split.addEventListener("pointerup", up);
+    split.addEventListener("pointercancel", up);
+  });
+  split.addEventListener("dblclick", () => {
+    appEl.style.removeProperty("--nt-sb-w");
+    try {
+      localStorage.removeItem(SIDEBAR_W_KEY);
+    } catch {}
+  });
 }
 
 function initGit() {
@@ -2102,6 +2148,7 @@ export function initNotes() {
   window.addEventListener("focus", () => state.activeMainView === "notes" && syncVault());
   startVaultPolling();
   initGit();
+  initSidebarResize();
   initEditor({ onInput: handleEditorInput, onSelection: handleSelectionState });
   propsPanel = createPropsPanel(document.getElementById("nt-props"), {
     editor: document.getElementById("nt-editor"),
