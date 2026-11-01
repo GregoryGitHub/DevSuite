@@ -3,13 +3,26 @@ rules_version = '2';
 // App Notas (src/js/sync/firebaseRemote.js): cada usuário só enxerga users/{uid}/...
 // Notas e pastas: { ver, deleted, data, rev, device }. Gravar exige ver = atual + 1
 // (concorrência otimista: dois aparelhos não sobrescrevem um ao outro sem saber).
+//
+// A configuração web (apiKey etc.) é pública por natureza: qualquer um consegue criar uma conta
+// no projeto. Por isso só contas listadas em owners/{uid} usam o banco. A lista fica no próprio
+// Firestore (não no repositório) e só é editada pelo console/admin: os apps não leem nem gravam.
 service cloud.firestore {
   match /databases/{database}/documents {
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid
+        && exists(/databases/$(database)/documents/owners/$(uid));
+    }
+
+    match /owners/{uid} {
+      allow read, write: if false;
+    }
+
     match /users/{uid}/{kind}/{id} {
-      allow read: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders'];
-      allow create: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders']
+      allow read: if owner(uid) && kind in ['notes', 'folders'];
+      allow create: if owner(uid) && kind in ['notes', 'folders']
         && request.resource.data.ver == 1 && valid();
-      allow update: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders']
+      allow update: if owner(uid) && kind in ['notes', 'folders']
         && request.resource.data.ver == resource.data.ver + 1 && valid();
       allow delete: if false;
 

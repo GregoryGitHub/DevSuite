@@ -1,11 +1,17 @@
 rules_version = '2';
 
 // App Notas: imagens das notas em users/{uid}/images/{nome} (nome = SHA-256 do conteúdo).
+// Só contas listadas em owners/{uid} no Firestore (ver firestore.rules).
 service firebase.storage {
   match /b/{bucket}/o {
+    function owner(uid) {
+      return request.auth != null && request.auth.uid == uid
+        && firestore.exists(/databases/(default)/documents/owners/$(uid));
+    }
+
     match /users/{uid}/images/{name} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid
+      allow read: if owner(uid);
+      allow write: if owner(uid)
         && name.matches('[a-z0-9]+[.](png|jpg|gif|webp|bmp|avif)')
         && request.resource.size < 15 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
