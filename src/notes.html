@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-edition="notas">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Notas</title>
+    <!-- PWA (iOS: "Adicionar à Tela de Início"); no app desktop estas tags não fazem nada -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#1c1c1e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Notas" />
+    <link rel="apple-touch-icon" href="icons/notas-180.png" />
+    <link rel="icon" type="image/png" href="icons/notas-192.png" />
+    <!-- Fontes locais (offline): Poppins e FontAwesome 6 em vendor/ -->
+    <link rel="stylesheet" href="vendor/fonts/poppins.css" />
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css" />
+    <script>
+      // Aplica o tema antes da primeira pintura (evita piscar); theme.js assume depois.
+      try {
+        var pref = localStorage.getItem("theme") || "system";
+        var light = pref === "light" || (pref === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+      } catch (e) {
+        document.documentElement.dataset.theme = "dark";
+      }
+      document.documentElement.dataset.platform = window.__TAURI__ ? "desktop" : "web";
+    </script>
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="notes.css" />
+    <link rel="stylesheet" href="zettel.css" />
+    <link rel="stylesheet" href="git.css" />
+    <link rel="stylesheet" href="code.css" />
+    <!-- Toast, modais e divisores arrastáveis que as Notas compartilham com HTTP/Banco -->
+    <link rel="stylesheet" href="http.css" />
+    <link rel="stylesheet" href="db.css" />
+    <link rel="stylesheet" href="notas.css" />
+  </head>
+  <body>
+    <main class="app">
+      <!-- Modo bandeja (desktop): barra de arrastar com ocultar, tema e menu -->
+      <div class="window-bar" data-tauri-drag-region>
+        <div class="drag-spacer" data-tauri-drag-region></div>
+        <div class="window-controls">
+          <button id="btn-hide" class="bar-btn" title="Ocultar na bandeja">
+            <i class="fa-solid fa-minus"></i>
+          </button>
+          <button class="bar-btn" data-theme-toggle title="Alternar tema claro/escuro">
+            <i class="fa-solid fa-moon"></i>
+          </button>
+          <div class="menu-container">
+            <button id="btn-menu-toggle" class="bar-btn" title="Opções">
+              <i class="fa-solid fa-ellipsis-vertical"></i>
+            </button>
+            <div id="menu-dropdown" class="menu-dropdown" hidden>
+              <button id="menu-item-hide" class="menu-item">
+                <i class="fa-solid fa-eye-slash"></i>
+                Ocultar Janela
+              </button>
+              <div class="menu-divider"></div>
+              <button id="menu-item-quit" class="menu-item danger">
+                <i class="fa-solid fa-power-off"></i>
+                Fechar Aplicativo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- #view-notes e #view-settings vêm do index.html (notes-main.js), sem duplicar a markup -->
+      <div id="views" class="views-container"></div>
+
+      <nav id="bottom-nav" class="bottom-nav">
+        <button class="bottom-tab active" data-view="notes" title="Notas">
+          <i class="fa-solid fa-note-sticky"></i>
+        </button>
+        <button class="bottom-tab" data-view="settings" title="Configurações">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+      </nav>
+    </main>
+    <script type="module" src="notes-main.js"></script>
+  </body>
+</html>

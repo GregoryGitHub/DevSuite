@@ -17,9 +17,14 @@ const LEAF_BLOCKS = "h1,h2,h3,p,li,pre,td,th,div,blockquote";
 // Images are files kept by the Rust side (src-tauri/src/note_images.rs) and served by the
 // "noteimg" protocol; the note HTML only stores the URL, so notes.json stays small.
 // WebView2 (Windows) exposes custom protocols as http://<scheme>.localhost/.
+// In the browser (PWA of the Notas app) images live in IndexedDB and the service worker
+// (src/sw.js) serves them at the relative URL noteimg/<name>.
 
-const IMG_BASE = /Windows|Android/i.test(navigator.userAgent) ? "http://noteimg.localhost/" : "noteimg://localhost/";
-const IMG_URL_RE = /(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)([a-z0-9]+\.[a-z0-9]+)/gi;
+const IN_BROWSER = typeof window !== "undefined" && !window.__TAURI__ && typeof document !== "undefined" && document.documentElement.dataset.edition === "notas";
+const IMG_BASE = IN_BROWSER ? "noteimg/" : /Windows|Android/i.test(navigator.userAgent) ? "http://noteimg.localhost/" : "noteimg://localhost/";
+const IMG_URL_RE = /(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/|(?<=["'])noteimg\/)([a-z0-9]+\.[a-z0-9]+)/gi;
+/** Form stored in the cloud (sync): the same on every device; each one converts on load. */
+const CANONICAL_IMG_BASE = "noteimg://localhost/";
 
 export function noteImageUrl(name) {
   return IMG_BASE + name;
@@ -67,7 +72,7 @@ export function fileImageRel(src) {
 
 /** File name of an image stored by the app, or null for remote/data URLs. */
 export function localImageName(src) {
-  const m = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/)([a-z0-9]+\.[a-z0-9]+)$/i.exec(src || "");
+  const m = /^(?:noteimg:\/\/localhost\/|http:\/\/noteimg\.localhost\/|noteimg\/)([a-z0-9]+\.[a-z0-9]+)$/i.exec(src || "");
   return m ? m[1] : null;
 }
 
@@ -101,6 +106,11 @@ function legacyToHtml(title, content) {
 /** Notes copied from another OS carry the other WebView's image URL form. */
 export function normalizeNoteHtml(html) {
   return html.includes("noteimg") ? html.replace(IMG_URL_RE, (_, name) => IMG_BASE + name) : html;
+}
+
+/** Image URLs in the form stored in the cloud (sync). */
+export function canonicalNoteHtml(html) {
+  return html.includes("noteimg") ? html.replace(IMG_URL_RE, (_, name) => CANONICAL_IMG_BASE + name) : html;
 }
 
 /** Fills in fields added after v0.2 and migrates plain-text notes (notes.json import). */

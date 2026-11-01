@@ -1,0 +1,275 @@
+/* App "Notas" (notes.html): ajustes da edição só de Notas, no desktop e no navegador (PWA). */
+
+/* Configurações que não existem neste app (a markup fica para o settings.js). */
+.notas-hidden {
+  display: none !important;
+}
+
+/* Sem janelas desatachadas nem seletor dos outros apps. */
+[data-edition="notas"] [data-detach],
+[data-edition="notas"] [data-switch-view]:not([data-switch-view="notes"]):not([data-switch-view="settings"]) {
+  display: none !important;
+}
+
+.notas-fatal {
+  position: fixed;
+  inset: auto 12px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+/* ---------- Navegador (PWA, foco no iPhone) ---------- */
+
+/* Sem moldura de janela: a página inteira é o app, respeitando o notch e a barra de início. */
+[data-platform="web"] body {
+  background: var(--nt-bg) !important;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+[data-platform="web"] .app,
+[data-platform="web"] body.desktop-mode .app {
+  border: none;
+  border-radius: 0;
+  background: var(--nt-bg);
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  /* --vvh = altura visível (menos o teclado do iOS), atualizada pelo js/web/pwa.js */
+  height: var(--vvh, 100dvh);
+}
+
+/* Toque longo abre o menu do app, não o balão de copiar/compartilhar do iOS. */
+[data-platform="web"] #notes-app .nt-list,
+[data-platform="web"] #notes-app .nt-folders {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+[data-platform="web"] body.desktop-mode .app {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+/* Controles de janela do sistema operacional não fazem sentido no navegador. */
+[data-platform="web"] .window-bar,
+[data-platform="web"] .win-caption,
+[data-platform="web"] [data-action="tray"],
+[data-platform="web"] [data-action="desktop"],
+[data-platform="web"] [data-action="close-desktop"],
+[data-platform="web"] [data-action="import-folder"],
+[data-platform="web"] [data-action="vault-refresh"],
+[data-platform="web"] .nt-storage-switch .fa-chevron-down {
+  display: none !important;
+}
+
+[data-platform="web"] .nt-storage-switch {
+  pointer-events: none;
+}
+
+/* Texto selecionável no editor (o app desktop desliga a seleção fora dele). */
+[data-platform="web"] .nt-editor,
+[data-platform="web"] input,
+[data-platform="web"] textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* iOS dá zoom em campos com fonte < 16px ao focar. */
+@media (pointer: coarse) {
+  [data-platform="web"] input,
+  [data-platform="web"] textarea,
+  [data-platform="web"] select {
+    font-size: 16px;
+  }
+
+  [data-platform="web"] .nt-editor {
+    font-size: 16px;
+  }
+}
+
+/* ---------- Navegação (js/components/notasShell.js) ---------- */
+
+/* Um app só: sem barra de abas (Configurações pela engrenagem das pastas / da barra). */
+[data-edition="notas"] .bottom-nav {
+  display: none !important;
+}
+
+[data-edition="notas"] .nt-tb-sidebar {
+  min-width: 0;
+}
+
+/* Modo bandeja do desktop: a engrenagem divide o topo das pastas com "abrir no modo desktop". */
+[data-edition="notas"] .nt-sidebar > .nt-nav > span:empty {
+  display: none;
+}
+
+[data-edition="notas"] .nt-sidebar > .nt-nav {
+  justify-content: flex-end;
+}
+
+/* Configurações no celular: "‹ Notas" + título grande, como as outras telas. */
+.notas-settings-head {
+  display: block;
+}
+
+.notas-settings-head .nt-large-title {
+  margin-bottom: 4px;
+}
+
+[data-edition="notas"] .settings-toolbar .nt-back {
+  margin-right: 4px;
+}
+
+/* ---------- Sincronização (js/sync/syncUi.js) ---------- */
+
+/* Rodapé das pastas: "Nova Pasta" à esquerda, status do sync à direita. */
+.notas-sidebar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  flex-shrink: 0;
+}
+
+body.desktop-mode .notas-sidebar-foot {
+  padding: 8px 12px 10px 14px;
+}
+
+body.desktop-mode .notas-sidebar-foot .nt-new-folder {
+  padding: 0;
+}
+
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 0 3px 6px;
+  border: none;
+  background: none;
+  color: var(--nt-muted, var(--muted));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.sync-pill span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-pill:hover span {
+  text-decoration: underline;
+}
+
+.sync-pill[data-state="ok"] i {
+  color: #22c55e;
+}
+
+.sync-pill[data-state="pending"] i,
+.sync-pill[data-state="syncing"] i {
+  color: var(--nt-yellow, var(--accent));
+}
+
+.sync-pill[data-state="syncing"] i {
+  animation: sync-spin 1s linear infinite;
+}
+
+.sync-pill[data-state="error"] {
+  color: var(--danger);
+}
+
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Cartão da conta: conteúdo empilhado (no celular os botões não cabem ao lado do texto). */
+#setting-sync {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+#setting-sync .sync-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sync-account {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sync-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  max-width: 360px;
+}
+
+.sync-form label {
+  margin-top: 4px;
+}
+
+.sync-form input {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(var(--fg-rgb), 0.05);
+  color: var(--text);
+  font: inherit;
+}
+
+.sync-form .sync-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sync-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* Aviso do iOS: instalar na Tela de Início para os dados não serem apagados. */
+.pwa-banner {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--nt-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, calc(0.35 * var(--shade-k, 1)));
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pwa-banner p {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.pwa-banner button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+}

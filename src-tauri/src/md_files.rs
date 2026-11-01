@@ -105,7 +105,7 @@ pub fn open_file(app: &AppHandle, path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy().to_string();
     let init = format!("window.__DEVSUITE_MD__ = {};", serde_json::json!({ "path": path_str }));
     let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-        .title(format!("{} — Dev Suite", file_name(path)))
+        .title(format!("{} — {}", file_name(path), product_name(app)))
         .initialization_script(&init)
         .decorations(false)
         .transparent(true)
@@ -163,13 +163,18 @@ pub fn close_requested(app: &AppHandle, window: &tauri::Window) -> bool {
 
 // ---------- Prévia ----------
 
+/// "Dev Suite" ou "Notas" (productName do tauri.conf usado no build).
+fn product_name(app: &AppHandle) -> String {
+    app.config().product_name.clone().unwrap_or_default()
+}
+
 /// Cria a janela de prévia oculta (pré-aquecida: abrir depois é instantâneo).
 pub fn ensure_preview(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(PREVIEW_LABEL).is_some() {
         return Ok(());
     }
     WebviewWindowBuilder::new(app, PREVIEW_LABEL, WebviewUrl::App("index.html".into()))
-        .title("Pré-visualização — Dev Suite")
+        .title(format!("Pré-visualização — {}", product_name(app)))
         .initialization_script("window.__DEVSUITE_PREVIEW__ = true;")
         .decorations(false)
         .transparent(true)

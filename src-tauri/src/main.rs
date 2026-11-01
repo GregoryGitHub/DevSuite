@@ -1,19 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_windows;
+#[cfg(feature = "suite")]
 mod cli;
+#[cfg(feature = "suite")]
 mod db;
+mod files;
+#[cfg(feature = "suite")]
 mod http;
 mod md_files;
 mod note_images;
 mod note_pdf;
 mod notes_db;
 mod notes_git;
+mod notes_sync;
 mod notes_vault;
 mod persist;
 #[cfg(windows)]
 mod quicklook;
+#[cfg(feature = "suite")]
 mod rabbit;
+#[cfg(feature = "suite")]
 mod redis_app;
 
 use std::fs;
@@ -144,6 +151,13 @@ fn kanban_migrated(app: tauri::AppHandle) -> Result<(), String> {
     fs::rename(&path, path.with_extension("json.migrated")).map_err(|e| e.to_string())
 }
 
+/// Nome da entrada de autostart (Windows: valor em Run; Linux: `<nome>.desktop`). O app só de
+/// Notas usa outro nome para conviver com o Dev Suite instalado.
+#[cfg(feature = "suite")]
+const AUTOSTART: (&str, &str, &str) = ("DevSuite", "dev-suite", "Dev Suite");
+#[cfg(not(feature = "suite"))]
+const AUTOSTART: (&str, &str, &str) = ("Notas", "notas", "Notas");
+
 /// Último valor de autostart aplicado no sistema (evita rodar `reg.exe` a cada save).
 static AUTOSTART_APPLIED: Mutex<Option<bool>> = Mutex::new(None);
 
@@ -200,7 +214,7 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
                         "add",
                         RUN_KEY,
                         "/v",
-                        "DevSuite",
+                        AUTOSTART.0,
                         "/t",
                         "REG_SZ",
                         "/d",
@@ -209,7 +223,7 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
                     ])
                     .output();
             } else {
-                delete("DevSuite");
+                delete(AUTOSTART.0);
             }
         }
     }
@@ -220,11 +234,12 @@ fn apply_autostart(app: &tauri::AppHandle, autostart: bool) {
             if let Ok(config_dir) = app.path().config_dir() {
                 let autostart_dir = config_dir.join("autostart");
                 let _ = fs::remove_file(autostart_dir.join("todo-rs.desktop")); // nome antigo
-                let desktop_file = autostart_dir.join("dev-suite.desktop");
+                let desktop_file = autostart_dir.join(format!("{}.desktop", AUTOSTART.1));
                 if autostart {
                     let _ = fs::create_dir_all(&autostart_dir);
                     let content = format!(
-                        "[Desktop Entry]\nType=Application\nName=Dev Suite\nExec=env GDK_BACKEND=x11 \"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+                        "[Desktop Entry]\nType=Application\nName={}\nExec=env GDK_BACKEND=x11 \"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+                        AUTOSTART.2,
                         exe_path.display()
                     );
                     let _ = fs::write(desktop_file, content);
@@ -433,6 +448,30 @@ fn show_window(app: &tauri::AppHandle, tray_rect: Option<tauri::Rect>) {
     }
 }
 
+/// Estado dos apps da edição completa (Banco, HTTP, RabbitMQ, Redis, CLI).
+#[cfg(feature = "suite")]
+fn manage_suite(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+        .manage(db::DbSessions::default())
+        .manage(db::DbInflight::default())
+        .manage(db::EntraTokens::default())
+        .manage(http::HttpInflight::default())
+        .manage(http::HttpCookies::default())
+        .manage(rabbit::RabbitDb::default())
+        .manage(rabbit::MgmtClients::default())
+        .manage(rabbit::RmqPasswords::default())
+        .manage(rabbit::RmqCaptures::default())
+        .manage(redis_app::RedisClients::default())
+        .manage(redis_app::RedisSecrets::default())
+        .manage(redis_app::RedisLive::default())
+        .manage(cli::CliState::default())
+}
+
+#[cfg(not(feature = "suite"))]
+fn manage_suite(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -440,7 +479,7 @@ fn main() {
             std::env::set_var("GDK_BACKEND", "x11");
         }
     }
-    tauri::Builder::default()
+    manage_suite(tauri::Builder::default()
         // Primeiro plugin: uma 2ª execução (ex.: atalho fixado "--app=http") só avisa esta.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // A CLI (`devsuite`) iniciando o app que já está aberto: nada a mostrar.
@@ -468,20 +507,7 @@ fn main() {
         .manage(DesktopMode::default())
         .manage(app_windows::AppWindows::default())
         .manage(notes_db::NotesDb::default())
-        .manage(notes_git::GitState::default())
-        .manage(db::DbSessions::default())
-        .manage(db::DbInflight::default())
-        .manage(db::EntraTokens::default())
-        .manage(http::HttpInflight::default())
-        .manage(http::HttpCookies::default())
-        .manage(rabbit::RabbitDb::default())
-        .manage(rabbit::MgmtClients::default())
-        .manage(rabbit::RmqPasswords::default())
-        .manage(rabbit::RmqCaptures::default())
-        .manage(redis_app::RedisClients::default())
-        .manage(redis_app::RedisSecrets::default())
-        .manage(redis_app::RedisLive::default())
-        .manage(cli::CliState::default())
+        .manage(notes_git::GitState::default()))
         .invoke_handler(tauri::generate_handler![
             load_kanban_data,
             save_kanban_data,
@@ -504,6 +530,17 @@ fn main() {
             notes_db::notes_set_storage,
             notes_db::notes_vault_refresh,
             notes_db::notes_vault_files,
+            notes_sync::sync_pending,
+            notes_sync::sync_done,
+            notes_sync::sync_apply,
+            notes_sync::sync_reset,
+            notes_sync::sync_meta_get,
+            notes_sync::sync_meta_set,
+            notes_sync::sync_images_pending,
+            notes_sync::sync_images_mark,
+            notes_sync::note_image_read,
+            notes_sync::note_images_missing,
+            notes_sync::note_image_put,
             notes_git::notes_vault_create,
             notes_git::git_info,
             notes_git::git_status,
@@ -537,13 +574,18 @@ fn main() {
             set_desktop_mode,
             minimize_window,
             toggle_maximize,
+            #[cfg(feature = "suite")]
             http::send_http_request,
+            #[cfg(feature = "suite")]
             http::cancel_http_request,
+            #[cfg(feature = "suite")]
             http::clear_http_cookies,
+            #[cfg(feature = "suite")]
             http::load_http_data,
+            #[cfg(feature = "suite")]
             http::save_http_data,
-            http::read_text_file,
-            http::write_file,
+            files::read_text_file,
+            files::write_file,
             note_images::save_note_image,
             note_images::import_note_image,
             note_images::export_note_images,
@@ -556,69 +598,133 @@ fn main() {
             md_files::md_window_close,
             md_files::md_preview_ready,
             md_files::md_preview_hide,
+            #[cfg(feature = "suite")]
             db::load_db_data,
+            #[cfg(feature = "suite")]
             db::save_db_data,
+            #[cfg(feature = "suite")]
             db::db_set_password,
+            #[cfg(feature = "suite")]
             db::db_has_password,
+            #[cfg(feature = "suite")]
             db::db_get_password,
+            #[cfg(feature = "suite")]
             db::db_forget_secrets,
+            #[cfg(feature = "suite")]
             db::db_test_connection,
+            #[cfg(feature = "suite")]
             db::db_connect,
+            #[cfg(feature = "suite")]
             db::db_disconnect,
+            #[cfg(feature = "suite")]
             db::db_introspect,
+            #[cfg(feature = "suite")]
             db::db_table_info,
+            #[cfg(feature = "suite")]
             db::db_ddl,
+            #[cfg(feature = "suite")]
             db::db_database_script,
+            #[cfg(feature = "suite")]
             db::db_table_schema,
+            #[cfg(feature = "suite")]
             db::db_execute,
+            #[cfg(feature = "suite")]
             db::db_cancel,
+            #[cfg(feature = "suite")]
             db::db_tx,
+            #[cfg(feature = "suite")]
             db::db_apply,
+            #[cfg(feature = "suite")]
             rabbit::rmq_load,
+            #[cfg(feature = "suite")]
             rabbit::rmq_save_connections,
+            #[cfg(feature = "suite")]
             rabbit::rmq_save_meta,
+            #[cfg(feature = "suite")]
             rabbit::rmq_set_password,
+            #[cfg(feature = "suite")]
             rabbit::rmq_has_password,
+            #[cfg(feature = "suite")]
             rabbit::rmq_forget_password,
+            #[cfg(feature = "suite")]
             rabbit::rmq_http,
+            #[cfg(feature = "suite")]
             rabbit::rmq_test,
+            #[cfg(feature = "suite")]
             rabbit::rmq_open_mgmt,
+            #[cfg(feature = "suite")]
             rabbit::rmq_move,
+            #[cfg(feature = "suite")]
             rabbit::rmq_capture_start,
+            #[cfg(feature = "suite")]
             rabbit::rmq_capture_stop,
+            #[cfg(feature = "suite")]
             rabbit::rmq_capture_attach,
+            #[cfg(feature = "suite")]
             rabbit::rmq_captures,
+            #[cfg(feature = "suite")]
             rabbit::rmq_capture_rename,
+            #[cfg(feature = "suite")]
             rabbit::rmq_capture_delete,
+            #[cfg(feature = "suite")]
             rabbit::rmq_messages_query,
+            #[cfg(feature = "suite")]
             rabbit::rmq_message_get,
+            #[cfg(feature = "suite")]
             rabbit::rmq_messages_get,
+            #[cfg(feature = "suite")]
             rabbit::rmq_messages_delete,
+            #[cfg(feature = "suite")]
             rabbit::rmq_messages_delete_matching,
+            #[cfg(feature = "suite")]
             rabbit::rmq_messages_save,
+            #[cfg(feature = "suite")]
             rabbit::rmq_store_stats,
+            #[cfg(feature = "suite")]
             redis_app::load_redis_data,
+            #[cfg(feature = "suite")]
             redis_app::save_redis_data,
+            #[cfg(feature = "suite")]
             redis_app::redis_set_secret,
+            #[cfg(feature = "suite")]
             redis_app::redis_has_secrets,
+            #[cfg(feature = "suite")]
             redis_app::redis_forget_secrets,
+            #[cfg(feature = "suite")]
             redis_app::redis_test,
+            #[cfg(feature = "suite")]
             redis_app::redis_connect,
+            #[cfg(feature = "suite")]
             redis_app::redis_disconnect,
+            #[cfg(feature = "suite")]
             redis_app::redis_close_session,
+            #[cfg(feature = "suite")]
             redis_app::redis_nodes,
+            #[cfg(feature = "suite")]
             redis_app::redis_exec,
+            #[cfg(feature = "suite")]
             redis_app::redis_pipeline,
+            #[cfg(feature = "suite")]
             redis_app::redis_scan,
+            #[cfg(feature = "suite")]
             redis_app::redis_live_start,
+            #[cfg(feature = "suite")]
             redis_app::redis_analyze_start,
+            #[cfg(feature = "suite")]
             redis_app::redis_live_stop,
+            #[cfg(feature = "suite")]
             cli::cli_ready,
+            #[cfg(feature = "suite")]
             cli::cli_reply,
+            #[cfg(feature = "suite")]
             cli::cli_event,
+            #[cfg(feature = "suite")]
             cli::cli_info,
+            #[cfg(feature = "suite")]
             cli::cli_setup,
+            #[cfg(feature = "suite")]
             cli::vaults::cli_store_read,
+            #[cfg(feature = "suite")]
             cli::vaults::cli_vault_create
         ])
         .register_asynchronous_uri_scheme_protocol(note_images::SCHEME, |ctx, request, responder| {
@@ -629,6 +735,7 @@ fn main() {
             });
         })
         .on_window_event(|window, event| {
+            #[cfg(feature = "suite")]
             if let WindowEvent::Destroyed = event {
                 cli::window_gone(window.app_handle(), window.label());
             }
@@ -650,7 +757,7 @@ fn main() {
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(tray_white)
                 .icon_as_template(true)
-                .tooltip("Dev Suite")
+                .tooltip(app.config().product_name.clone().unwrap_or_default())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -709,6 +816,7 @@ fn main() {
             if let Some(path) = launch_md {
                 md_files::open_file(app.handle(), &path)?;
             }
+            #[cfg(feature = "suite")]
             cli::start(app.handle());
             #[cfg(windows)]
             quicklook::set_enabled(app.handle(), settings.md_quicklook);

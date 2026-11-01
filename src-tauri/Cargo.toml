@@ -8,6 +8,12 @@ description = "Lightweight todo list running in the Windows tray"
 [workspace]
 members = ["cli"]
 
+# Edição completa (Dev Suite) = padrão. O app "Notas" (branch notas-pessoal) compila com
+# `--no-default-features`: só as Notas, sem Banco/RabbitMQ/Redis/HTTP/CLI e suas dependências.
+[features]
+default = ["suite"]
+suite = ["dep:reqwest", "dep:tiberius", "dep:tokio-util", "dep:futures-util", "dep:async-trait", "dep:keyring", "dep:mongodb", "dep:bson", "dep:rand", "dep:amqprs", "dep:amqp_serde", "dep:rustls", "dep:redis", "dep:russh"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -15,33 +21,33 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["image-png", "tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "http2", "charset", "multipart", "gzip", "brotli", "deflate", "cookies"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "rustls-tls-native-roots", "http2", "charset", "multipart", "gzip", "brotli", "deflate", "cookies"], optional = true }
 base64 = "0.22"
 tokio = { version = "1", features = ["sync", "macros", "net", "rt", "time", "io-util"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 # Cliente de banco de dados (aba "Banco"): SQL Server / Azure SQL via TDS em Rust puro.
-tiberius = { version = "0.13", default-features = false, features = ["tds80", "rustls", "chrono", "sql-browser-tokio"] }
-tokio-util = { version = "0.7", features = ["compat"] }
-futures-util = "0.3"
-async-trait = "0.1"
+tiberius = { version = "0.13", default-features = false, features = ["tds80", "rustls", "chrono", "sql-browser-tokio"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+futures-util = { version = "0.3", optional = true }
+async-trait = { version = "0.1", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-keyring = "4"
+keyring = { version = "4", optional = true }
 sha2 = "0.10"
 # MongoDB (Atlas, servidor/replica set, Azure Cosmos DB API Mongo).
-mongodb = "3.9"
-bson = "2.15"
-rand = "0.9"
+mongodb = { version = "3.9", optional = true }
+bson = { version = "2.15", optional = true }
+rand = { version = "0.9", optional = true }
 # Notas e pastas (notes.db): SQLite embutido no binário, com FTS5 para a busca.
 rusqlite = { version = "0.40", features = ["bundled"] }
 # RabbitMQ: AMQP 0-9-1 (captura ao vivo, mover/republicar com transação). A gestão usa a API HTTP do plugin de management (reqwest).
-amqprs = { version = "2.1", features = ["tls"] }
-amqp_serde = "0.4"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+amqprs = { version = "2.1", features = ["tls"], optional = true }
+amqp_serde = { version = "0.4", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 tauri-plugin-single-instance = "2"
 # Redis (app "Redis"): standalone/Cluster/Sentinel com TLS (rustls); túnel SSH em Rust puro.
-redis = { version = "1.8", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-insecure", "cluster-async", "sentinel"] }
-russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"] }
+redis = { version = "1.8", default-features = false, features = ["tokio-rustls-comp", "tls-rustls-insecure", "cluster-async", "sentinel"], optional = true }
+russh = { version = "0.64", default-features = false, features = ["ring", "rsa", "flate2"], optional = true }
 
 # Exportar notas em PDF (note_pdf.rs): mesmas versões usadas pelo Tauri/wry. Prévia de .md com
 # Espaço no Explorer (quicklook.rs): hook de teclado + Shell (IShellWindows/IFolderView2).

@@ -4,6 +4,7 @@ import {
 } from "../api.js";
 import { updateSettingsUI } from "./settings.js";
 import { registerApp } from "../appLifecycle.js";
+import { newId } from "../utils/ids.js";
 import {
   loadNoteStore,
   ensureContent,
@@ -19,6 +20,7 @@ import {
   isVault,
   setVaultContext,
   refreshVault,
+  loadFolders,
 } from "../noteStore.js";
 import { ATTACHMENTS_DIR, addVaultPath, knownVaults, sameVaultPath, vaultName, vaultLabels } from "../utils/vaultNote.js";
 import {
@@ -515,7 +517,7 @@ function setScope(scope) {
  * look at state.notes).
  */
 function newNoteObject(content, folderId, props = null, { time = Date.now(), created = null, ids = null, zids = null } = {}) {
-  let id = Date.now();
+  let id = newId();
   while (ids ? ids.has(id) : findNote(id)) id++;
   ids?.add(id);
   const createdAt = created ?? time;
@@ -650,7 +652,7 @@ async function importMarkdownFolder(parentId = scopeParentFolder()) {
 
     const folderIds = new Set(state.folders.map((f) => f.id));
     const makeFolder = (name, parent) => {
-      let id = Date.now();
+      let id = newId();
       while (folderIds.has(id)) id++;
       folderIds.add(id);
       const folder = { id, name: name.slice(0, 60), parent_id: parent };
@@ -1100,7 +1102,7 @@ function moveNote(id, folderId) {
 function createFolder(parentId = 0) {
   if (!state.folders.some((f) => f.id === parentId)) parentId = 0;
   const name = uniqueFolderName(state.folders, parentId, "Nova Pasta");
-  let id = Date.now();
+  let id = newId();
   while (allFolders().some((f) => f.id === id)) id++;
   // A posição alfabética é recalculada ao confirmar o nome (renameFolder).
   insertFolderSorted(state.folders, { id, name, parent_id: parentId });
@@ -1537,7 +1539,7 @@ function renderStorageLabel() {
   const btn = appEl.querySelector('[data-action="storage-menu"]');
   const refresh = appEl.querySelector('[data-action="vault-refresh"]');
   const path = state.settings.vault_path || "";
-  if (label) label.textContent = isVault() ? vaultName(path) || "Cofre" : "No Meu PC";
+  if (label) label.textContent = isVault() ? vaultName(path) || "Cofre" : hasTauri ? "No Meu PC" : "Neste aparelho";
   if (icon) icon.className = isVault() ? "fa-solid fa-folder-open" : "fa-solid fa-hard-drive";
   if (btn) btn.title = isVault() ? `Cofre: ${path}\nClique para trocar de cofre` : "Banco local deste computador\nClique para trocar de cofre";
   if (refresh) refresh.hidden = !isVault();
@@ -2290,7 +2292,7 @@ function folderByPath(path, { create = true } = {}) {
       missing = true;
       return { id: -1 };
     }
-    let id = Date.now();
+    let id = newId();
     while (allFolders().some((f) => f.id === id)) id++;
     const folder = { id, name: name.slice(0, 60), parent_id: parent };
     insertFolderSorted(state.folders, folder);
@@ -2345,4 +2347,82 @@ export const notesHost = {
     flushNotesSave();
     await whenSaved();
   },
+};
+
+// ---------- Sincronização com a nuvem (js/sync/, app Notas) ----------
+
+/** O que o motor do sync (js/sync/syncEngine.js) usa do estado vivo das Notas. */
+export const syncHost = {
+  /** Grava as edições pendentes antes de ler/enviar o banco. */
+  async flush() {
+    flushNotesSave();
+    await whenSaved();
+  },
+  /** Notas com edição na memória ainda não gravada (não podem ser sobrescritas pela nuvem). */
+  busyIds() {
+    return new Set(state.notes.filter((n) => n.dirty).map((n) => n.id));
+  },
+  /** Conteúdo atual de uma nota do banco local, ou null se não existe. */
+  async localNote(id) {
+    const note = findNote(id);
+    if (!note) return null;
+    await ensureContent(note);
+    return { content: note.content, props: note.props, folder_id: note.folder_id ?? 0, deleted_at: note.deleted_at ?? null, pinned: note.pinned || 0 };
+  },
+  /**
+   * Conflito: a versão deste aparelho vira uma nota nova (a original fica com a da nuvem).
+   * `suffix` entra no fim da 1ª linha (título).
+   */
+  conflictCopy(local, suffix) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = local.content || "";
+    const first = tpl.content.firstElementChild;
+    if (first) first.append(document.createTextNode(suffix));
+    else tpl.content.append(Object.assign(document.createElement("h1"), { textContent: suffix.trim() }));
+    const id = makeNote(tpl.innerHTML, local.folder_id ?? 0, local.props ?? null);
+    flushNotesSave();
+    return id;
+  },
+  /**
+   * Mudanças já gravadas no banco local pelo sync: `notes` = registros que chegaram (com o
+   * HTML), `removed` = ids apagados, `folders` = a árvore mudou (relê do banco), `replace` =
+   * conflitos: a versão da nuvem entra mesmo com edição aberta (a daqui já virou uma cópia).
+   */
+  async applied({ notes = [], removed = [], folders = false, replace = [] }) {
+    const forced = new Set(replace);
+    let reloadOpen = false;
+    for (const r of notes) {
+      const meta = {
+        id: r.id, title: r.title, preview: r.preview, created_at: r.created_at, updated_at: r.updated_at,
+        pinned: r.pinned || 0, folder_id: r.folder_id || 0, deleted_at: r.deleted_at ?? null,
+        props: r.props && typeof r.props === "object" ? r.props : null, links: Array.isArray(r.links) ? r.links : [],
+      };
+      const note = findNote(r.id);
+      if (!note) state.notes.push({ ...meta, content: undefined, dirty: false, saved: true });
+      else if (!note.dirty || forced.has(note.id)) {
+        Object.assign(note, meta, { content: undefined, dirty: false });
+        if (note.id === ui.selectedId) reloadOpen = true;
+      }
+    }
+    if (removed.length) {
+      const gone = new Set(removed);
+      state.notes = state.notes.filter((n) => !gone.has(n.id) || n.dirty);
+    }
+    if (folders) state.folders = await loadFolders();
+    if (!notes.length && !removed.length && !folders) return;
+    notesChanged();
+    if (ui.selectedId !== null && !findNote(ui.selectedId)) ui.selectedId = null;
+    renderNotes();
+    if (reloadOpen || ui.selectedId === null) loadSelectedIntoEditor();
+  },
+  /** Imagens baixadas: as que estavam quebradas na tela carregam de novo. */
+  imagesArrived() {
+    for (const img of document.querySelectorAll("#notes-app img")) {
+      const src = img.getAttribute("src");
+      if (!img.complete || img.naturalWidth || !src) continue;
+      img.removeAttribute("src");
+      requestAnimationFrame(() => img.setAttribute("src", src));
+    }
+  },
+  toast,
 };

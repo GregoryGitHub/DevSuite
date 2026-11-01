@@ -803,15 +803,19 @@ function dropTypedZwsp() {
 
 // ---------- Images ----------
 
-/** File picker for the "/" menu: images go in at the caret, stored like pasted ones. */
-function pickImages() {
+/**
+ * File picker for the "/" menu: images go in at the caret, stored like pasted ones.
+ * `camera`: opens the camera directly on phones (capture); elsewhere it is the same picker.
+ */
+function pickImages({ camera = false } = {}) {
   const range = selectionRange()?.cloneRange();
   if (!range) return;
   const seq = loadSeq;
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
-  input.multiple = true;
+  input.multiple = !camera;
+  if (camera) input.setAttribute("capture", "environment");
   input.hidden = true;
   document.body.appendChild(input);
   input.addEventListener("change", () => {
@@ -1146,6 +1150,10 @@ export function runCommand(cmd) {
     case "image":
       changed(); // the "/" menu already removed its text: save that even if the picker is cancelled
       pickImages();
+      return;
+    case "camera":
+      changed();
+      pickImages({ camera: true });
       return;
     case "inline-code":
       toggleInlineCode();

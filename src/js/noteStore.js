@@ -1,4 +1,5 @@
-import { notesApi } from "./api.js";
+import { notesApi as desktopNotesApi, hasTauri } from "./api.js";
+import { webNotesApi } from "./web/webNotesApi.js";
 import { normalizeNote, normalizeNoteHtml, purgeExpiredTrash, noteLines, noteImageNames } from "./utils/noteContent.js";
 import { noteLinks, normalizeProps, propsEmpty, propsSearchText } from "./utils/zettel.js";
 import { normalizeFolderTree } from "./utils/folderTree.js";
@@ -19,6 +20,9 @@ import { noteToMarkdown, markdownToNote, vaultMeta, vaultLookupIndex, folderDir,
 // `vaultKey` (pasta + título + Markdown já gravados: abrir uma nota e só resolver links não
 // regrava o arquivo).
 
+// Navegador (PWA do app Notas): a mesma interface sobre o IndexedDB (web/webNotesApi.js).
+const notesApi = hasTauri ? desktopNotesApi : webNotesApi;
+
 let chain = Promise.resolve();
 
 export const isVault = () => state.settings.notes_storage === "vault";
@@ -35,8 +39,9 @@ export function setVaultContext(ctx) {
 /** Enfileira uma operação no banco; erros vão para onError (a fila continua). */
 function enqueue(op, onError) {
   const run = chain.then(op);
-  // Gravou no cofre: o painel Git (noteGit.js) atualiza o status.
-  if (isVault() && onError) run.then(() => document.dispatchEvent(new CustomEvent("notesvaultwrite")), () => {});
+  // Gravou no cofre: o painel Git (noteGit.js) atualiza o status. No banco local: o sync
+  // com a nuvem (js/sync/syncUi.js) envia daqui a pouco.
+  if (onError) run.then(() => document.dispatchEvent(new CustomEvent(isVault() ? "notesvaultwrite" : "noteslocalwrite")), () => {});
   chain = run.catch((e) => {
     console.error("notes.db:", e);
     onError?.(String(e));
@@ -120,6 +125,12 @@ export async function loadNoteStore() {
   }));
   const list = (Array.isArray(folders) ? folders : []).map((f) => ({ id: f.id, name: f.name, parent_id: f.parent_id || 0 }));
   return { notes, folders: normalizeFolderTree(list), error };
+}
+
+/** Só as pastas (depois de aplicar mudanças da nuvem). */
+export async function loadFolders() {
+  const folders = await notesApi.folders();
+  return normalizeFolderTree((Array.isArray(folders) ? folders : []).map((f) => ({ id: f.id, name: f.name, parent_id: f.parent_id || 0 })));
 }
 
 function vaultIndexFor(notes) {

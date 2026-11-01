@@ -1,0 +1,17 @@
+{
+  "name": "Notas",
+  "short_name": "Notas",
+  "description": "Notas offline com sincronização entre computador e celular.",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1e1e1f",
+  "theme_color": "#1e1e1f",
+  "icons": [
+    { "src": "icons/notas-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/notas-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/notas-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -23,8 +23,11 @@ const SLASH_ITEMS = [
   { cmd: "mermaid", label: "Diagrama Mermaid", desc: "Fluxograma, sequência, gantt...", icon: "fa-solid fa-diagram-project", keys: "mermaid diagrama fluxograma graph sequencia" },
   { cmd: "table", label: "Tabela", icon: "fa-solid fa-table-cells", keys: "tabela table grade" },
   { cmd: "image", label: "Imagem", desc: "Escolher arquivo", icon: "fa-regular fa-image", keys: "imagem image foto figura" },
+  { cmd: "camera", label: "Foto", desc: "Tirar com a câmera", icon: "fa-solid fa-camera", keys: "foto camera fotografia tirar", touch: true },
   { cmd: "link", label: "Link para nota", desc: "Referência a outra nota", icon: "fa-solid fa-link", hint: "[[", keys: "link nota referencia wiki zettel ligar" },
 ];
+// "Foto" (câmera) só em telas de toque (celular/tablet); no computador "Imagem" já cobre.
+const TOUCH = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 const IN_CELL_SKIP = new Set(["table", "code", "mermaid", "title", "heading", "subheading", "quote", "mono"]);
 
 const BUBBLE = [
@@ -159,6 +162,7 @@ export function initNoteMenus(api) {
     const words = fold(query).split(/\s+/).filter(Boolean);
     return SLASH_ITEMS.filter((it) => {
       if (inCell && IN_CELL_SKIP.has(it.cmd)) return false;
+      if (it.touch && !TOUCH) return false;
       const hay = fold(`${it.label} ${it.keys} ${it.hint || ""}`);
       return words.every((w) => hay.includes(w));
     });

@@ -32,15 +32,52 @@ let target = {
   copy: (path) => importNoteImageApi(path).then(noteImageUrl),
 };
 
+// Browser without a target (plain preview of index.html): images stay as data: URLs.
+let hasTarget = hasTauri;
+
 export function setImageTarget(t) {
   target = t;
+  hasTarget = true;
+}
+
+// Phone photos (3–12 MB) are shrunk before storing: notes sync to the cloud and the
+// free Firebase Storage quota is 5 GB. Screenshots and small images stay as they are.
+const PHOTO_MAX_SIDE = 2048;
+const PHOTO_MAX_BYTES = 1.5 * 1024 * 1024;
+const PHOTO_QUALITY = 0.82;
+
+/** JPEG of at most PHOTO_MAX_SIDE px (EXIF orientation applied), or the blob unchanged. */
+export async function shrinkPhoto(blob) {
+  const photo = /^image\/(jpeg|heic|heif|webp)$/i.test(blob.type) || (blob.type === "image/png" && blob.size > 4 * PHOTO_MAX_BYTES);
+  if (!photo || typeof createImageBitmap !== "function") return blob;
+  let bmp;
+  try {
+    bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  } catch {
+    return blob;
+  }
+  try {
+    const scale = Math.min(1, PHOTO_MAX_SIDE / Math.max(bmp.width, bmp.height));
+    if (scale === 1 && blob.size <= PHOTO_MAX_BYTES && blob.type !== "image/heic" && blob.type !== "image/heif") return blob;
+    const w = Math.round(bmp.width * scale);
+    const h = Math.round(bmp.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
+    return out && out.size < blob.size ? out : blob;
+  } finally {
+    bmp.close();
+  }
 }
 
 /** Stores an image blob and returns { src, width, height }. */
 export async function storeImageBlob(blob) {
+  blob = await shrinkPhoto(blob);
   const [size, src] = await Promise.all([
     imageSize(blob),
-    hasTauri
+    hasTarget
       ? blob.arrayBuffer().then((buf) => target.save(new Uint8Array(buf), EXT_BY_TYPE[blob.type] || ""))
       : blobToDataUrl(blob), // browser preview without the Rust side
   ]);
@@ -61,7 +98,7 @@ export async function storeImageFile(path) {
 
 /** Replaces data: URL images in an HTML string with stored files (in parallel). */
 export async function storeDataImages(html) {
-  if (!hasTauri || !html.includes("data:image/")) return html;
+  if (!hasTarget || !html.includes("data:image/")) return html;
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
   const imgs = [...tpl.content.querySelectorAll('img[src^="data:image/"]')];

@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// App Notas (src/js/sync/firebaseRemote.js): cada usuário só enxerga users/{uid}/...
+// Notas e pastas: { ver, deleted, data, rev, device }. Gravar exige ver = atual + 1
+// (concorrência otimista: dois aparelhos não sobrescrevem um ao outro sem saber).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{kind}/{id} {
+      allow read: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders'];
+      allow create: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders']
+        && request.resource.data.ver == 1 && valid();
+      allow update: if request.auth != null && request.auth.uid == uid && kind in ['notes', 'folders']
+        && request.resource.data.ver == resource.data.ver + 1 && valid();
+      allow delete: if false;
+
+      function valid() {
+        return request.resource.data.keys().hasOnly(['ver', 'deleted', 'data', 'rev', 'device'])
+          && request.resource.data.ver is int
+          && request.resource.data.deleted is bool
+          && request.resource.data.rev == request.time;
+      }
+    }
+  }
+}

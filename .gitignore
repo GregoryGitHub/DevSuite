@@ -5,3 +5,9 @@ Cargo.lock
 *.log
 # CLI devsuite compilada para o externalBin (build_cli.ps1 / build_cli.sh)
 src-tauri/binaries/
+
+# Site do app Notas (build_web) e cache da CLI do Firebase
+dist-web/
+.firebase/
+# Logs dos emuladores do Firebase
+*-debug.log

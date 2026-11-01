@@ -335,20 +335,3 @@ pub fn save_http_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<
     crate::persist::write(path, json);
     Ok(())
 }
-
-/// Lê um arquivo de texto escolhido pelo usuário (importação de coleções).
-#[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| e.to_string())
-}
-
-/// Salva texto (exportação) ou bytes em base64 (corpo de resposta binário).
-#[tauri::command]
-pub fn write_file(path: String, text: Option<String>, base64: Option<String>) -> Result<(), String> {
-    let bytes = match (text, base64) {
-        (_, Some(b)) => B64.decode(b).map_err(|e| e.to_string())?,
-        (Some(t), None) => t.into_bytes(),
-        (None, None) => Vec::new(),
-    };
-    fs::write(&path, bytes).map_err(|e| e.to_string())
-}

@@ -26,7 +26,8 @@ export function showMainView(view) {
   document.querySelectorAll(".bottom-tab").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === view);
   });
-  for (const [name, el] of Object.entries(PANELS)) el.hidden = name !== view;
+  // O app só de Notas (notes.html) tem apenas notes e settings.
+  for (const [name, el] of Object.entries(PANELS)) if (el) el.hidden = name !== view;
 
   document.dispatchEvent(new CustomEvent("mainviewchange", { detail: { view } }));
 }

@@ -8,14 +8,13 @@
 //! protocolo também serve qualquer arquivo do cofre por `noteimg://localhost/v/<caminho>`
 //! (imagens que já estavam no cofre, referenciadas pelo Markdown).
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
+use sha2::{Digest, Sha256};
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::Manager;
 
@@ -47,7 +46,7 @@ fn images_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Pasta das imagens do banco local (a cópia das notas para um cofre lê daqui).
-fn local_images_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn local_images_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("note-images"))
 }
 
@@ -64,7 +63,7 @@ fn normalize_ext(ext: &str) -> Option<&'static str> {
 }
 
 /// Detecta o formato pelos primeiros bytes (não confia na extensão nem no MIME do clipboard).
-fn sniff(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG") {
         Some("png")
     } else if bytes.starts_with(b"\xFF\xD8\xFF") {
@@ -96,7 +95,7 @@ fn mime(ext: &str) -> &'static str {
 }
 
 /// Nome gerado por `store`: só [a-z0-9] + extensão conhecida (sem barras nem `..`).
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     match name.rsplit_once('.') {
         Some((stem, ext)) => {
             !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric()) && normalize_ext(ext) == Some(ext)
@@ -107,6 +106,14 @@ fn valid_name(name: &str) -> bool {
 
 fn store(app: &tauri::AppHandle, bytes: &[u8], hint_ext: &str) -> Result<String, String> {
     store_in(&images_dir(app)?, bytes, hint_ext)
+}
+
+/// Nome por conteúdo: SHA-256 em hexadecimal + extensão. O navegador (PWA do app Notas,
+/// `crypto.subtle`) calcula o mesmo nome, então a imagem é a mesma em todos os aparelhos.
+/// Imagens antigas (hash do Rust + tamanho) continuam válidas: `valid_name` só exige [a-z0-9].
+pub fn content_name(bytes: &[u8], ext: &str) -> String {
+    let hex: String = Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect();
+    format!("{hex}.{ext}")
 }
 
 /// Grava a imagem em `dir` com o nome do hash do conteúdo (reaproveita se já existe).
@@ -120,9 +127,7 @@ pub fn store_in(dir: &Path, bytes: &[u8], hint_ext: &str) -> Result<String, Stri
     let ext = sniff(bytes)
         .or_else(|| normalize_ext(hint_ext))
         .ok_or("Formato de imagem não suportado.")?;
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    let name = format!("{:016x}{:x}.{ext}", h.finish(), bytes.len());
+    let name = content_name(bytes, ext);
 
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(&name);

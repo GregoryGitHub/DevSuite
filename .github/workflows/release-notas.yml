@@ -1,0 +1,76 @@
+name: "Publish Notas"
+
+# App "Notas" (branch notas-pessoal): desktop (Windows/Linux) só com as Notas + PWA no
+# Firebase Hosting. Tags "notas-v*" (ex.: notas-v0.1.0); as "v*" continuam sendo do Dev Suite.
+on:
+  push:
+    tags:
+      - "notas-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release (ex.: notas-v0.1.0)"
+        required: true
+
+concurrency:
+  group: release-notas-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  desktop:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ["ubuntu-22.04", "windows-latest"]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      # Sem CLI `devsuite` e sem Banco/RabbitMQ/Redis/HTTP: feature `suite` desligada.
+      - name: Build and Publish Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Notas ${{ inputs.tag || github.ref_name }}"
+          releaseBody: "App Notas: desktop (offline, com sincronização) e versão web em https://notas-df5e6.web.app"
+          releaseDraft: false
+          prerelease: false
+          args: "--config src-tauri/tauri.notas.conf.json -- --no-default-features"
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Build PWA
+        run: node tools/build_web.mjs
+
+      # Precisa do secret FIREBASE_SERVICE_ACCOUNT_NOTAS (JSON de uma conta de serviço com
+      # "Administrador do Firebase Hosting"; `firebase init hosting:github` cria e grava sozinho).
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_NOTAS }}
+          projectId: notas-df5e6
+          channelId: live

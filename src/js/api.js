@@ -52,6 +52,27 @@ export const notesApi = {
   vaultFiles: () => invoke("notes_vault_files"),
 };
 
+// ---------- Sincronização com a nuvem (app Notas; src-tauri/src/notes_sync.rs) ----------
+// O navegador tem a mesma interface em js/web/webNotesApi.js (webSyncApi).
+
+export const syncApi = {
+  /** { items: [{ kind: "note" | "folder", id, seq, ver, item | null }], total } — item null = apagada. */
+  pending: (items, limit = 200) => invoke("sync_pending", { items, limit }),
+  /** [{ kind, id, seq, ver }]: subiu; limpa a pendência se `seq` não mudou. */
+  done: (items) => invoke("sync_done", { items }),
+  /** { notes, deleted_notes, folders, deleted_folders, vers } vindas da nuvem. */
+  apply: (changes) => invoke("sync_apply", { changes }),
+  reset: () => invoke("sync_reset"),
+  metaGet: (key) => invoke("sync_meta_get", { key }),
+  metaSet: (key, value) => invoke("sync_meta_set", { key, value: value ?? null }),
+  imagesPending: () => invoke("sync_images_pending"),
+  imagesMark: (names) => invoke("sync_images_mark", { names }),
+  /** ArrayBuffer com os bytes da imagem. */
+  imageRead: (name) => invoke("note_image_read", { name }),
+  imagesMissing: (names) => invoke("note_images_missing", { names }),
+  imagePut: (name, bytes) => invoke("note_image_put", bytes, { headers: { "x-name": name } }),
+};
+
 // ---------- Controle de versão do cofre (git do sistema; src-tauri/src/notes_git.rs) ----------
 // `path` = relativo à raiz do repositório (o cofre pode ser uma subpasta dele).
 
@@ -86,7 +107,17 @@ export const gitApi = {
   setIdentity: (name, email, global) => invoke("git_set_identity", { name, email, global }),
 };
 
+// Navegador (PWA do app Notas): settings.json vira uma chave do localStorage.
+const WEB_SETTINGS = "notas-settings";
+
 export async function loadSettingsApi() {
+  if (!window.__TAURI__?.core) {
+    try {
+      return JSON.parse(localStorage.getItem(WEB_SETTINGS)) || {};
+    } catch {
+      return {};
+    }
+  }
   try {
     return (await invoke("load_settings")) || { autostart: false, start_minimized: false };
   } catch (e) {
@@ -96,6 +127,12 @@ export async function loadSettingsApi() {
 }
 
 export async function saveSettingsApi(settings) {
+  if (!window.__TAURI__?.core) {
+    try {
+      localStorage.setItem(WEB_SETTINGS, JSON.stringify(settings));
+    } catch {}
+    return;
+  }
   try {
     await invoke("save_settings", { settings });
   } catch (e) {

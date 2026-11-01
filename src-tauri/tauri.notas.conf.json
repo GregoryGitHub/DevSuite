@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Notas",
+  "mainBinaryName": "notas",
+  "version": "0.1.0",
+  "identifier": "com.henrique.notas",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Notas",
+        "url": "notes.html",
+        "width": 370,
+        "height": 530,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "center": false,
+        "maximizable": false,
+        "dragDropEnabled": false
+      }
+    ]
+  },
+  "bundle": {
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Notas.Markdown",
+        "description": "Documento Markdown",
+        "role": "Editor",
+        "mimeType": "text/markdown"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": null
+      }
+    },
+    "icon": [
+      "icons/apps/notes.png",
+      "icons/apps/notes.ico"
+    ]
+  }
+}

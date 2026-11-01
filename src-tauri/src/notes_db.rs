@@ -162,6 +162,8 @@ const MIGRATIONS: &[&str] = &[
      ALTER TABLE notes ADD COLUMN links TEXT NOT NULL DEFAULT '';",
     // v2: subpastas.
     "ALTER TABLE folders ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0;",
+    // v3: sincronização com a nuvem (app Notas, notes_sync.rs).
+    crate::notes_sync::MIGRATION,
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -195,7 +197,7 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn i(v: u64) -> i64 {
+pub(crate) fn i(v: u64) -> i64 {
     v as i64
 }
 
@@ -252,7 +254,7 @@ pub fn get_content(conn: &Connection, id: u64) -> rusqlite::Result<Option<String
     conn.query_row("SELECT content FROM notes WHERE id = ?1", params![i(id)], |r| r.get(0)).optional()
 }
 
-fn upsert(conn: &Connection, n: &NoteSave, replace: bool) -> rusqlite::Result<usize> {
+pub(crate) fn upsert(conn: &Connection, n: &NoteSave, replace: bool) -> rusqlite::Result<usize> {
     let m = &n.meta;
     let sql = if replace {
         "INSERT INTO notes (id, title, preview, content, plain, images, created_at, updated_at, pinned, folder_id, deleted_at, props, links)
@@ -351,12 +353,26 @@ pub fn folders(conn: &Connection) -> rusqlite::Result<Vec<Folder>> {
     rows.collect()
 }
 
-/// Substitui a lista de pastas (é pequena; a ordem do array vira `position`).
+/// Substitui a lista de pastas (é pequena; a ordem do array vira `position`). Só grava o que
+/// mudou: os gatilhos do sync (notes_sync.rs) marcam como pendente cada linha tocada.
 pub fn save_folders(conn: &mut Connection, folders: &[Folder]) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM folders", [])?;
     {
-        let mut st = tx.prepare("INSERT INTO folders (id, name, position, parent_id) VALUES (?1, ?2, ?3, ?4)")?;
+        let keep: HashSet<i64> = folders.iter().map(|f| i(f.id)).collect();
+        let existing: Vec<i64> = {
+            let mut st = tx.prepare("SELECT id FROM folders")?;
+            let rows = st.query_map([], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut del = tx.prepare("DELETE FROM folders WHERE id = ?1")?;
+        for id in existing.into_iter().filter(|id| !keep.contains(id)) {
+            del.execute(params![id])?;
+        }
+        let mut st = tx.prepare(
+            "INSERT INTO folders (id, name, position, parent_id) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name, position = excluded.position, parent_id = excluded.parent_id
+             WHERE name IS NOT excluded.name OR position IS NOT excluded.position OR parent_id IS NOT excluded.parent_id",
+        )?;
         for (pos, f) in folders.iter().enumerate() {
             st.execute(params![i(f.id), f.name, pos as i64, i(f.parent_id)])?;
         }
@@ -432,9 +448,38 @@ fn storage_from_settings(dir: &Path) -> Storage {
     }
 }
 
+/// App Notas (sem a feature `suite`, pasta de dados própria): na 1ª execução traz as notas e
+/// imagens do Dev Suite instalado (`com.todors.app`, pasta irmã). `VACUUM INTO` copia um
+/// retrato consistente mesmo com o Dev Suite aberto (inclui o que ainda está no WAL).
+#[cfg(not(feature = "suite"))]
+fn import_from_dev_suite(dir: &Path) {
+    let target = dir.join("notes.db");
+    let Some(source_dir) = dir.parent().map(|p| p.join("com.todors.app")) else { return };
+    let source = source_dir.join("notes.db");
+    if target.exists() || !source.exists() {
+        return;
+    }
+    let copied = Connection::open(&source).and_then(|c| c.execute("VACUUM INTO ?1", params![target.to_string_lossy()]));
+    if let Err(e) = copied {
+        eprintln!("importar notas do Dev Suite: {e}");
+        let _ = fs::remove_file(&target);
+        return;
+    }
+    let images = source_dir.join("note-images");
+    if let Ok(entries) = fs::read_dir(&images) {
+        let out = dir.join("note-images");
+        let _ = fs::create_dir_all(&out);
+        for e in entries.flatten() {
+            let _ = fs::copy(e.path(), out.join(e.file_name()));
+        }
+    }
+}
+
 fn open_backend(dir: &Path, storage: &Storage) -> Result<Backend, String> {
     match storage {
         Storage::Sqlite => {
+            #[cfg(not(feature = "suite"))]
+            import_from_dev_suite(dir);
             let conn = open(&dir.join("notes.db")).map_err(|e| format!("Falha ao abrir notes.db: {e}"))?;
             crate::note_images::set_vault_root(None);
             Ok(Backend::Sqlite(conn))
@@ -449,7 +494,7 @@ fn open_backend(dir: &Path, storage: &Storage) -> Result<Backend, String> {
 
 /// Roda `f` com o backend numa thread de bloqueio (nunca na thread da interface). Se o
 /// cofre estiver indisponível (rede fora), o erro volta e a próxima chamada tenta de novo.
-async fn with_backend<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
+pub(crate) async fn with_backend<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(&mut Backend) -> Result<T, String> + Send + 'static,
@@ -471,7 +516,7 @@ where
     .map_err(|e| e.to_string())?
 }
 
-fn db<T>(r: rusqlite::Result<T>) -> Result<T, String> {
+pub(crate) fn db<T>(r: rusqlite::Result<T>) -> Result<T, String> {
     r.map_err(|e| e.to_string())
 }
 
