@@ -16,6 +16,11 @@ export function newConnection(patch = {}) {
 
 export function normalizeConnection(c = {}) {
   const auth = c.auth || {};
+  // Servidor colado como no SSMS/connection string ("tcp:host,1433"): o DNS não resolve o prefixo.
+  const s = c.driver === "mongo" ? null : splitServer(c.host);
+  if (s && (s.host !== String(c.host || "").trim() || "port" in s)) {
+    c = { ...c, host: s.host, ...("port" in s ? { port: s.port } : {}), ...(s.instance ? { instance: s.instance } : {}) };
+  }
   return {
     id: c.id || uid(),
     name: String(c.name || ""),
@@ -235,6 +240,29 @@ function clamp(v, min, max) {
 }
 
 /**
+ * Servidor no formato do ADO.NET/SSMS ("tcp:host,1433", "host\INSTANCIA", "host:1433")
+ * → { host, port?, instance? }. `port: null` = instância nomeada sem porta (SQL Browser).
+ */
+export function splitServer(server) {
+  let host = String(server || "").trim().replace(/^(tcp|np|lpc|admin):/i, "");
+  const out = {};
+  // "host:porta" só com um ":" (IPv6 como ::1 fica intacto).
+  const portMatch = /,\s*(\d+)$/.exec(host) || (host.split(":").length === 2 ? /:(\d+)$/.exec(host) : null);
+  if (portMatch) {
+    out.port = Number(portMatch[1]);
+    host = host.slice(0, portMatch.index);
+  }
+  const slash = host.indexOf("\\");
+  if (slash >= 0) {
+    out.instance = host.slice(slash + 1).trim();
+    host = host.slice(0, slash);
+    if (!portMatch) out.port = null;
+  }
+  out.host = host.trim();
+  return out;
+}
+
+/**
  * Lê uma connection string ADO.NET ("Server=tcp:x,1433;Initial Catalog=db;...") ou JDBC
  * ("jdbc:sqlserver://x:1433;databaseName=db;...") e devolve { patch, password }.
  */
@@ -266,21 +294,7 @@ export function parseConnectionString(text) {
   const pick = (...keys) => keys.map((k) => kv[k]).find((v) => v !== undefined);
   const server = hostPart || pick("server", "data source", "address", "addr", "network address", "servername") || "";
   const patch = { auth: {} };
-  if (server) {
-    let host = server.replace(/^tcp:/i, "");
-    const portMatch = /[,:](\d+)$/.exec(host);
-    if (portMatch) {
-      patch.port = Number(portMatch[1]);
-      host = host.slice(0, portMatch.index);
-    }
-    const slash = host.indexOf("\\");
-    if (slash >= 0) {
-      patch.instance = host.slice(slash + 1);
-      host = host.slice(0, slash);
-      if (!portMatch) patch.port = null;
-    }
-    patch.host = host;
-  }
+  if (server) Object.assign(patch, splitServer(server));
   const instance = pick("instancename");
   if (instance) patch.instance = instance;
   const port = pick("port", "portnumber");

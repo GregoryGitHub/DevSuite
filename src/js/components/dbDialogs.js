@@ -1,7 +1,7 @@
 import { el, icon } from "../utils/dom.js";
 import { createModalHost, btn } from "./modal.js";
 import { highlightCode } from "../utils/highlight.js";
-import { normalizeConnection, connConfig, connLabel, isAzureHost, parseConnectionString, parseMongoUri, mongoFlavor, CONN_COLORS } from "../utils/dbModel.js";
+import { normalizeConnection, connConfig, connLabel, isAzureHost, parseConnectionString, parseMongoUri, splitServer, mongoFlavor, CONN_COLORS } from "../utils/dbModel.js";
 import { dbApi } from "../api.js";
 
 // Modais da aba Banco: conexão (criar/editar/testar) e revisão do SQL antes de gravar.
@@ -42,6 +42,17 @@ export function connectionDialog(initial, { isNew, hasPassword = false, onSave, 
   const status = el("div.db-test", { hidden: true });
 
   const hostInput = input(c.host, { placeholder: "servidor.database.windows.net ou localhost", oninput: (e) => ((c.host = e.target.value), syncKind()) });
+  // "tcp:host,1433" / "host\INSTANCIA" colados no Servidor: separa porta e instância nos campos.
+  hostInput.addEventListener("change", () => {
+    const s = splitServer(hostInput.value);
+    if (s.host === hostInput.value.trim() && !("port" in s)) return;
+    c.host = hostInput.value = s.host;
+    if ("port" in s) c.port = s.port;
+    if (s.instance) c.instance = s.instance;
+    portInput.value = c.port ?? "";
+    instanceInput.value = c.instance;
+    syncKind();
+  });
   const portInput = input(c.port ?? "", { type: "number", placeholder: "1433", className: "hx-num", oninput: (e) => (c.port = e.target.value ? Number(e.target.value) : null) });
   const instanceInput = input(c.instance, { placeholder: "opcional (SQLEXPRESS)", oninput: (e) => (c.instance = e.target.value) });
   const dbInput = input(c.database, { placeholder: "padrão do login", oninput: (e) => (c.database = e.target.value) });

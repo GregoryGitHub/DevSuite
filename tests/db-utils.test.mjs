@@ -142,6 +142,22 @@ assert.equal(r.password, 'a;b"c');
 assert.equal(r.patch.auth.user, "o'k");
 assert.equal(r.patch.database, "d");
 
+// Servidor colado no campo Servidor como no SSMS ("tcp:host,porta")
+{
+  const { splitServer, normalizeConnection } = await import(base + "dbModel.js");
+  assert.deepEqual(splitServer("tcp:x.database.windows.net"), { host: "x.database.windows.net" });
+  assert.deepEqual(splitServer(" TCP:x.database.windows.net,1433 "), { port: 1433, host: "x.database.windows.net" });
+  assert.deepEqual(splitServer(String.raw`PC\SQLEXPRESS`), { instance: "SQLEXPRESS", port: null, host: "PC" });
+  assert.deepEqual(splitServer("h:1444"), { port: 1444, host: "h" });
+  assert.deepEqual(splitServer("::1"), { host: "::1" });
+  const c = normalizeConnection({ host: "tcp:nucleo-p.database.windows.net", port: 1433 });
+  assert.equal(c.host, "nucleo-p.database.windows.net");
+  assert.equal(c.port, 1433);
+  assert.equal(normalizeConnection({ host: "tcp:h,1500" }).port, 1500);
+  assert.equal(normalizeConnection({ host: "localhost", port: 1500 }).port, 1500);
+  assert.equal(normalizeConnection({ driver: "mongo", host: "tcp:x" }).host, "tcp:x");
+}
+
 // buildConnectionString: ida e volta pelo parser
 {
   const { buildConnectionString, newConnection: nc, isMongo } = await import(base + "dbModel.js");

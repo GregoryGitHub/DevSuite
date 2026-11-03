@@ -34,7 +34,7 @@ impl Driver for MssqlDriver {
 
 async fn open(cfg: &ConnConfig, database: &str, secret: Secret) -> DbResult<Conn> {
     let mut config = Config::new();
-    config.host(cfg.host.trim());
+    config.host(server_host(&cfg.host));
     if let Some(port) = cfg.port {
         config.port(port);
     }
@@ -82,6 +82,16 @@ async fn open(cfg: &ConnConfig, database: &str, secret: Secret) -> DbResult<Conn
     tokio::time::timeout(timeout, attempt)
         .await
         .map_err(|_| format!("Tempo limite de conexão esgotado ({}s)", timeout.as_secs()))?
+}
+
+/// Host sem o prefixo de protocolo do ADO.NET/SSMS ("tcp:x.database.windows.net"):
+/// conexões antigas (ou da CLI) podem ter guardado o servidor como foi colado.
+fn server_host(host: &str) -> &str {
+    let host = host.trim();
+    ["tcp:", "np:", "lpc:", "admin:"]
+        .iter()
+        .find_map(|p| host.get(..p.len()).filter(|h| h.eq_ignore_ascii_case(p)).map(|_| host[p.len()..].trim()))
+        .unwrap_or(host)
 }
 
 async fn connect_tcp(config: &Config, cfg: &ConnConfig) -> DbResult<TcpStream> {
