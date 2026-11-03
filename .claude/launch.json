@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "notas-web",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "tools/serve_web.py",
+        "5180"
+      ],
+      "port": 5180
+    }
+  ]
+}
