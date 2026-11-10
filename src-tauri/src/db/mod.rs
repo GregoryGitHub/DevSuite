@@ -214,9 +214,24 @@ pub async fn db_disconnect(app: tauri::AppHandle, prefix: String) -> Result<(), 
         let keys: Vec<String> = map.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
         keys.iter().filter_map(|k| map.remove(k)).collect()
     };
+    // Já fora do mapa: o próximo comando abre uma sessão nova. Não espera o lock aqui —
+    // uma consulta presa num socket morto o seguraria para sempre e o "Desconectar"
+    // nunca voltaria (era preciso fechar o app para reconectar). A sessão ocupada é
+    // fechada em segundo plano quando o comando dela terminar (ou for cancelado).
     for slot in slots {
-        if let Some(session) = slot.lock().await.take() {
-            session.close().await;
+        match slot.clone().try_lock_owned() {
+            Ok(mut guard) => {
+                if let Some(session) = guard.take() {
+                    session.close().await;
+                }
+            }
+            Err(_) => {
+                tauri::async_runtime::spawn(async move {
+                    if let Some(session) = slot.lock().await.take() {
+                        session.close().await;
+                    }
+                });
+            }
         }
     }
     Ok(())

@@ -162,6 +162,7 @@ const get = (path, c) => api("GET", path, null, c);
 async function ensureConnected(c) {
   const st = status(c.id);
   if (st.state === "connected") return st;
+  if (st.state === "off") throw new Error(`${connLabel(c)} está desconectada.`);
   if (st.pending) return st.pending;
   const pending = (async () => {
     try {
@@ -261,6 +262,24 @@ function selectConnection(id, section = null) {
 
 // ---------- Barra lateral ----------
 
+// Reordenar conexões: arrastar uma sobre a outra (metade de cima = antes) ou "Mover para cima/baixo".
+let draggedConn = null;
+const connIndex = (id) => R.connections.findIndex((c) => c.id === id);
+const dropAfter = (e, row) => {
+  const r = row.getBoundingClientRect();
+  return e.clientY > r.top + r.height / 2;
+};
+const clearConnDrop = () => treeEl.querySelectorAll(".rmq-conn.drop-before, .rmq-conn.drop-after").forEach((r) => r.classList.remove("drop-before", "drop-after"));
+
+/** `id` passa a ocupar a posição `to` (a ordem do array é a da barra lateral e a gravada no rabbit.db). */
+function moveConnection(id, to) {
+  const from = connIndex(id);
+  if (from < 0 || to < 0 || to >= R.connections.length || from === to) return;
+  R.connections.splice(to, 0, ...R.connections.splice(from, 1));
+  saveConnections();
+  renderAll();
+}
+
 function renderTree() {
   treeEl.innerHTML = "";
   if (!R.connections.length) {
@@ -287,6 +306,34 @@ function renderTree() {
         oncontextmenu: (e) => {
           e.preventDefault();
           showMenu(e.clientX, e.clientY, connMenu(c));
+        },
+        draggable: "true",
+        ondragstart: (e) => {
+          draggedConn = c.id;
+          e.dataTransfer.setData("application/x-rmq-conn", c.id);
+          e.dataTransfer.effectAllowed = "move";
+        },
+        ondragend: () => {
+          draggedConn = null;
+          clearConnDrop();
+        },
+        ondragover: (e) => {
+          if (!draggedConn || draggedConn === c.id) return;
+          e.preventDefault();
+          clearConnDrop();
+          row.classList.add(dropAfter(e, row) ? "drop-after" : "drop-before");
+        },
+        ondragleave: () => row.classList.remove("drop-before", "drop-after"),
+        ondrop: (e) => {
+          if (!draggedConn || draggedConn === c.id) return;
+          e.preventDefault();
+          const from = connIndex(draggedConn);
+          let to = connIndex(c.id) + (dropAfter(e, row) ? 1 : 0);
+          if (from < to) to--;
+          const id = draggedConn;
+          draggedConn = null;
+          clearConnDrop();
+          moveConnection(id, to);
         },
       },
       el("span.rmq-caret", {}, icon(`fa-solid fa-chevron-${open ? "down" : "right"}`)),
@@ -347,12 +394,47 @@ function toggleExpanded(id) {
   renderTree();
 }
 
+/** Desconectar: para de consultar o management (auto-refresh, bandeja) até "Conectar" de novo.
+ *  As gravações ativas da conexão mantêm uma conexão AMQP aberta: são paradas (com confirmação). */
+async function disconnectConnection(c) {
+  const caps = [...live.values()].filter((x) => x.conn_id === c.id);
+  if (caps.length) {
+    const ok = await rmqConfirm({
+      title: "Desconectar?",
+      message: `${caps.length} gravação(ões) de ${connLabel(c)} em andamento ${caps.length > 1 ? "serão paradas" : "será parada"} (as mensagens já gravadas continuam no rabbit.db).`,
+      confirmLabel: "Desconectar",
+    });
+    if (!ok) return;
+    await Promise.all(caps.map((x) => stopCapture(x.id)));
+  }
+  statuses.set(c.id, { state: "off" });
+  counts.delete(c.id);
+  rabbitApi.disconnect(c.id).catch(() => {});
+  if (R.ui.conn_id === c.id) {
+    detail = null;
+    showCurrent(true);
+  }
+  renderAll();
+  toast(`${connLabel(c)} desconectada`);
+}
+
+function connectConnection(c) {
+  statuses.delete(c.id);
+  selectConnection(c.id);
+}
+
 function connMenu(c) {
   return [
     { label: "Editar conexão…", icon: "fa-solid fa-pen", run: () => editConnection(c) },
     { label: "Duplicar", icon: "fa-regular fa-clone", run: () => duplicateConnection(c) },
-    { label: "Reconectar", icon: "fa-solid fa-rotate", run: () => (statuses.delete(c.id), selectConnection(c.id)) },
+    status(c.id).state === "off"
+      ? { label: "Conectar", icon: "fa-solid fa-plug", run: () => connectConnection(c) }
+      : { label: "Desconectar", icon: "fa-solid fa-plug-circle-xmark", run: () => disconnectConnection(c) },
+    { label: "Reconectar", icon: "fa-solid fa-rotate", run: () => connectConnection(c) },
     { label: "Abrir management no navegador", icon: "fa-solid fa-arrow-up-right-from-square", run: () => rabbitApi.openMgmt(connConfig(c)).catch((e) => toast(String(e))) },
+    "sep",
+    { label: "Mover para cima", icon: "fa-solid fa-arrow-up", disabled: connIndex(c.id) === 0, run: () => moveConnection(c.id, connIndex(c.id) - 1) },
+    { label: "Mover para baixo", icon: "fa-solid fa-arrow-down", disabled: connIndex(c.id) === R.connections.length - 1, run: () => moveConnection(c.id, connIndex(c.id) + 1) },
     "sep",
     { label: "Preferências (busca e gravação)…", icon: "fa-solid fa-sliders", run: () => settingsDialog(ctx) },
     "sep",
@@ -373,7 +455,7 @@ function renderHeader() {
     titleEl.textContent = connLabel(c);
     const ov = st.overview;
     const vh = vhostOf(c);
-    subEl.textContent = ov ? `RabbitMQ ${ov.rabbitmq_version} · ${vh ? `vhost ${vh}` : "todos os vhosts"}` : st.state === "error" ? "erro de conexão" : c.mgmt_url;
+    subEl.textContent = ov ? `RabbitMQ ${ov.rabbitmq_version} · ${vh ? `vhost ${vh}` : "todos os vhosts"}` : st.state === "error" ? "erro de conexão" : st.state === "off" ? "desconectada" : c.mgmt_url;
     if (c.color) appEl.style.setProperty("--conn", c.color);
     else appEl.style.removeProperty("--conn");
   }
@@ -414,7 +496,7 @@ function renderCompact() {
         el(
           "span.db-compact-host",
           {},
-          st.state === "error" ? "erro de conexão" : qt ? `${fmtNum(qt.messages_ready)} prontas · ${fmtNum(qt.messages_unacknowledged)} sem ack` : "",
+          st.state === "error" ? "erro de conexão" : st.state === "off" ? "desconectada" : qt ? `${fmtNum(qt.messages_ready)} prontas · ${fmtNum(qt.messages_unacknowledged)} sem ack` : "",
         ),
       ),
     );
@@ -426,6 +508,7 @@ async function refreshCompact() {
   if (state.desktopMode || state.activeMainView !== "rabbit" || document.hidden) return;
   await Promise.all(
     R.connections.map(async (c) => {
+      if (status(c.id).state === "off") return;
       try {
         const overview = await get("/overview", c);
         statuses.set(c.id, { ...status(c.id), state: "connected", overview, pending: null });
@@ -507,6 +590,20 @@ async function showCurrent(force = false, opts = {}) {
   }
   const key = `${c.id}|${vhostOf(c)}|${R.ui.section}|${detail ? `${detail.type}:${detail.vhost}:${detail.name}` : ""}`;
   if (!force && view && key === viewKey && mainEl.contains(view.root)) return refreshView();
+  if (status(c.id).state === "off") {
+    disposeView();
+    placeholder(
+      el(
+        "div.db-placeholder",
+        {},
+        icon("fa-solid fa-plug-circle-xmark"),
+        el("p", {}, `${connLabel(c)} está desconectada.`),
+        el("button.hx-btn.primary", { type: "button", onclick: () => connectConnection(c) }, icon("fa-solid fa-plug"), " Conectar"),
+      ),
+    );
+    renderHeader();
+    return;
+  }
   if (status(c.id).state !== "connected") {
     disposeView();
     placeholder(el("div.db-placeholder", {}, icon("fa-solid fa-spinner fa-spin"), el("p", {}, `Conectando em ${connLabel(c)}…`)));

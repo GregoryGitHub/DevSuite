@@ -18,6 +18,11 @@ use super::RmqConn;
 pub struct MgmtClients(Mutex<HashMap<(bool, u64), Client>>);
 
 impl MgmtClients {
+    /// Descarta os clientes (e o keep-alive deles); são recriados no próximo uso.
+    pub fn clear(&self) {
+        self.0.lock().unwrap().clear();
+    }
+
     fn get(&self, insecure: bool, timeout_s: u64) -> Result<Client, String> {
         let mut map = self.0.lock().unwrap();
         if let Some(c) = map.get(&(insecure, timeout_s)) {

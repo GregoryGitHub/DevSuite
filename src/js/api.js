@@ -319,6 +319,7 @@ export const rabbitApi = {
   setPassword: (connId, password) => invoke("rmq_set_password", { connId, password }),
   hasPassword: (connId) => invoke("rmq_has_password", { connId }).catch(() => false),
   forgetPassword: (connId) => invoke("rmq_forget_password", { connId }).catch(() => {}),
+  disconnect: (connId) => invoke("rmq_disconnect", { connId }),
   /** Chamada à API HTTP do management: path sem "/api" (segmentos já codificados). */
   http(conn, method, path, body = null, password = null) {
     requireTauri();

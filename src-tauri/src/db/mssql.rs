@@ -104,7 +104,19 @@ async fn connect_tcp(config: &Config, cfg: &ConnConfig) -> DbResult<TcpStream> {
             .map_err(|e| format!("Falha ao conectar em {}: {e}", config.get_addr()))?
     };
     let _ = tcp.set_nodelay(true);
+    // Sem keepalive uma queda de rede (VPN, Wi-Fi, NAT) deixa a leitura esperando para sempre
+    // nas sessões sem tempo limite (console/abas): com ele o SO derruba o socket em ~1 min,
+    // o erro marca a sessão como quebrada e o próximo comando reconecta.
+    let keepalive = socket2::TcpKeepalive::new().with_time(Duration::from_secs(30)).with_interval(Duration::from_secs(10));
+    let _ = socket2::SockRef::from(&tcp).set_tcp_keepalive(&keepalive);
     Ok(tcp)
+}
+
+/// Mensagem de erro do servidor no formato de `describe` ("[208] Invalid object name…").
+fn is_server_error(msg: &str) -> bool {
+    msg.strip_prefix('[')
+        .and_then(|r| r.split_once(']'))
+        .is_some_and(|(code, _)| !code.is_empty() && code.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Mensagem legível para o usuário (erros do servidor no formato do SSMS).
@@ -155,6 +167,18 @@ impl MssqlSession {
                 msg
             }
         }
+    }
+
+    /// Erro devolvido por um caminho que não passa por `fail` (introspecção, BEGIN/COMMIT…):
+    /// só erro do servidor (`[código] …`, ver `describe`) mantém a sessão; queda de rede,
+    /// tempo esgotado ou protocolo dessincronizado a marcam para ser reaberta no próximo uso.
+    fn check<T>(&mut self, r: DbResult<T>) -> DbResult<T> {
+        if let Err(msg) = &r {
+            if !is_server_error(msg) {
+                self.broken = true;
+            }
+        }
+        r
     }
 
     async fn tran_count(&mut self) -> DbResult<u32> {
@@ -405,38 +429,52 @@ impl Session for MssqlSession {
     }
 
     async fn introspect(&mut self, path: &ObjectPath) -> DbResult<Vec<ObjectNode>> {
-        mssql_meta::introspect(&mut self.client, path).await
+        let r = mssql_meta::introspect(&mut self.client, path).await;
+        self.check(r)
     }
 
     async fn table_info(&mut self, schema: &str, name: &str) -> DbResult<TableInfo> {
-        mssql_meta::table_info(&mut self.client, schema, name).await
+        let r = mssql_meta::table_info(&mut self.client, schema, name).await;
+        self.check(r)
     }
 
     async fn ddl(&mut self, path: &ObjectPath) -> DbResult<String> {
-        mssql_meta::ddl(&mut self.client, path).await
+        let r = mssql_meta::ddl(&mut self.client, path).await;
+        self.check(r)
     }
 
     async fn table_schema(&mut self, schema: &str, name: &str) -> DbResult<TableSchema> {
-        mssql_meta::table_schema(&mut self.client, schema, name).await
+        let r = mssql_meta::table_schema(&mut self.client, schema, name).await;
+        self.check(r)
     }
 
     async fn database_script(&mut self, opts: &DbScriptOptions) -> DbResult<DbScript> {
-        mssql_meta::database_script(&mut self.client, opts).await
+        let r = mssql_meta::database_script(&mut self.client, opts).await;
+        self.check(r)
     }
 
     async fn begin(&mut self) -> DbResult<u32> {
-        self.batch("BEGIN TRANSACTION").await?;
-        self.tran_count().await
+        let r = match self.batch("BEGIN TRANSACTION").await {
+            Ok(()) => self.tran_count().await,
+            Err(e) => Err(e),
+        };
+        self.check(r)
     }
 
     async fn commit(&mut self) -> DbResult<u32> {
-        self.batch("IF @@TRANCOUNT > 0 COMMIT TRANSACTION").await?;
-        self.tran_count().await
+        let r = match self.batch("IF @@TRANCOUNT > 0 COMMIT TRANSACTION").await {
+            Ok(()) => self.tran_count().await,
+            Err(e) => Err(e),
+        };
+        self.check(r)
     }
 
     async fn rollback(&mut self) -> DbResult<u32> {
-        self.batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION").await?;
-        self.tran_count().await
+        let r = match self.batch("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION").await {
+            Ok(()) => self.tran_count().await,
+            Err(e) => Err(e),
+        };
+        self.check(r)
     }
 
     async fn close(self: Box<Self>) {
@@ -580,6 +618,14 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_errors_keep_the_session() {
+        assert!(is_server_error("[208] Invalid object name 'x'. (linha 1)"));
+        assert!(!is_server_error("An existing connection was forcibly closed (os error 10054)"));
+        assert!(!is_server_error("Timeout elapsed"));
+        assert!(!is_server_error("[] x"));
+    }
 
     #[test]
     fn dml_commands() {

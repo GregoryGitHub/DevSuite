@@ -140,6 +140,15 @@ body.desktop-mode #view-rabbit {
   background: var(--nt-hover);
 }
 
+/* Reordenar conexões arrastando: linha onde a conexão vai entrar. */
+.rmq-conn.drop-before {
+  box-shadow: inset 0 2px 0 var(--nt-yellow);
+}
+
+.rmq-conn.drop-after {
+  box-shadow: inset 0 -2px 0 var(--nt-yellow);
+}
+
 .rmq-conn[style*="--conn"] .rmq-conn-name {
   color: var(--conn);
 }
@@ -1634,4 +1643,22 @@ body.db-resizing-y .rmq-split-h::after {
   .rmq-props {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Gravar: filas só com publicação direta — escolha entre Firehose e seguir no tap. */
+.rmq-capture-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-basis: 100%;
+  margin-top: 8px;
+}
+
+.db-test:has(.rmq-capture-choice) {
+  flex-wrap: wrap;
+}
+
+.db-test:has(.rmq-capture-choice) > span {
+  flex: 1;
+  min-width: 0;
 }

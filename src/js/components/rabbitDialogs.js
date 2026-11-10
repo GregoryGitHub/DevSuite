@@ -757,8 +757,46 @@ export function captureDialog(ctx, preset = {}) {
   }
   paintMode();
 
+  /** Filas marcadas sem ligação além da exchange padrão: só recebem publicações diretas na fila
+   *  (inclusive o "Publicar mensagem…" da fila), que o tap não enxerga. */
+  async function directOnlyQueues() {
+    const out = [];
+    for (const q of spec.queues) {
+      const list = await ctx.get(`${apiPath("queues", spec.vhost, q)}/bindings`);
+      if (!(list || []).some((b) => b.source && b.destination_type !== "exchange")) out.push(q);
+    }
+    return out;
+  }
+
+  let tapAccepted = "";
   async function start() {
     if (spec.mode === "tap" && !spec.queues.length) return status.show(false, "Marque ao menos uma fila.");
+    if (spec.mode === "tap" && tapAccepted !== `${spec.vhost}|${spec.queues.join("|")}`) {
+      status.show(null, "Verificando as ligações das filas…");
+      let direct = [];
+      try {
+        direct = await directOnlyQueues();
+      } catch (e) {
+        return status.show(false, String(e));
+      }
+      if (direct.length) {
+        const all = direct.length === spec.queues.length;
+        status.show(
+          false,
+          `${direct.join(", ")} ${direct.length > 1 ? "não têm" : "não tem"} ligação com exchange: as mensagens chegam publicadas direto na fila (exchange padrão, como o "Publicar mensagem…" da fila), e o modo tap não as vê. O Firehose grava essas mensagens (liga o tracing do vhost enquanto grava).`,
+        );
+        const actions = el(
+          "div.rmq-capture-choice",
+          {},
+          el("button.hx-btn.primary", { type: "button", onclick: () => ((spec.mode = "firehose"), paintMode(), start()) }, icon("fa-solid fa-fire"), " Gravar com Firehose"),
+          all
+            ? null
+            : el("button.hx-btn", { type: "button", onclick: () => ((tapAccepted = `${spec.vhost}|${spec.queues.join("|")}`), start()) }, "Continuar no tap (só as outras filas)"),
+        );
+        status.append(actions);
+        return;
+      }
+    }
     if (spec.mode === "exchange" && !spec.exchange) return status.show(false, "Informe a exchange.");
     if (spec.mode === "firehose" && evState.publish === false && evState.deliver === false) return status.show(false, "Escolha publicações e/ou entregas.");
     status.show(null, "Iniciando…");

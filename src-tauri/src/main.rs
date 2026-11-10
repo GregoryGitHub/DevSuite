@@ -580,6 +580,7 @@ fn main() {
             rabbit::rmq_set_password,
             rabbit::rmq_has_password,
             rabbit::rmq_forget_password,
+            rabbit::rmq_disconnect,
             rabbit::rmq_http,
             rabbit::rmq_test,
             rabbit::rmq_open_mgmt,

@@ -167,6 +167,14 @@ pub async fn rmq_forget_password(app: tauri::AppHandle, conn_id: String) -> Resu
         .map_err(|e| e.to_string())?
 }
 
+/// "Desconectar": esquece a senha em cache e fecha as conexões HTTP mantidas abertas
+/// (keep-alive) com o management. O próximo comando lê a senha do cofre e reconecta.
+#[tauri::command]
+pub fn rmq_disconnect(app: tauri::AppHandle, conn_id: String) {
+    app.state::<RmqPasswords>().0.lock().unwrap().remove(&conn_id);
+    app.state::<MgmtClients>().clear();
+}
+
 async fn password(app: &tauri::AppHandle, conn_id: &str, given: Option<String>) -> Result<String, String> {
     if let Some(pw) = given {
         return Ok(pw);
