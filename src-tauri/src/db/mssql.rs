@@ -181,6 +181,30 @@ impl MssqlSession {
         r
     }
 
+    async fn server_info_raw(&mut self) -> DbResult<ServerInfo> {
+        let row = self
+            .client
+            .simple_query(
+                "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)), CAST(SERVERPROPERTY('Edition') AS nvarchar(128)), \
+                 DB_NAME(), SUSER_SNAME()",
+            )
+            .await
+            .map_err(|e| describe(&e))?
+            .into_row()
+            .await
+            .map_err(|e| describe(&e))?
+            .ok_or("Servidor não respondeu")?;
+        let text = |i: usize| row.try_get::<&str, _>(i).ok().flatten().unwrap_or("").to_string();
+        let edition = text(1);
+        Ok(ServerInfo {
+            product: if edition.contains("Azure") { "Azure SQL".into() } else { format!("SQL Server {edition}") },
+            version: text(0),
+            database: text(2),
+            user: text(3),
+            dialect: "mssql".into(),
+        })
+    }
+
     async fn tran_count(&mut self) -> DbResult<u32> {
         let row = self
             .client
@@ -347,27 +371,8 @@ fn flush(sink: &mut dyn EventSink, index: usize, buf: &mut Vec<Vec<Value>>) -> R
 #[async_trait]
 impl Session for MssqlSession {
     async fn server_info(&mut self) -> DbResult<ServerInfo> {
-        let row = self
-            .client
-            .simple_query(
-                "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)), CAST(SERVERPROPERTY('Edition') AS nvarchar(128)), \
-                 DB_NAME(), SUSER_SNAME()",
-            )
-            .await
-            .map_err(|e| describe(&e))?
-            .into_row()
-            .await
-            .map_err(|e| describe(&e))?
-            .ok_or("Servidor não respondeu")?;
-        let text = |i: usize| row.try_get::<&str, _>(i).ok().flatten().unwrap_or("").to_string();
-        let edition = text(1);
-        Ok(ServerInfo {
-            product: if edition.contains("Azure") { "Azure SQL".into() } else { format!("SQL Server {edition}") },
-            version: text(0),
-            database: text(2),
-            user: text(3),
-            dialect: "mssql".into(),
-        })
+        let r = self.server_info_raw().await;
+        self.check(r)
     }
 
     async fn execute(&mut self, sql: &str, sink: &mut dyn EventSink, max_rows: Option<u64>) -> DbResult<ExecSummary> {
@@ -379,7 +384,7 @@ impl Session for MssqlSession {
         for batch in &on {
             if let Err(e) = self.batch(batch).await {
                 self.reset_options(&off).await;
-                return Err(e);
+                return self.check(Err(e));
             }
         }
         let started = Instant::now();
@@ -405,9 +410,11 @@ impl Session for MssqlSession {
     }
 
     async fn apply(&mut self, statements: &[String], atomic: bool) -> DbResult<Vec<u64>> {
-        let own_tx = atomic && self.tran_count().await? == 0;
+        let r = self.tran_count().await;
+        let own_tx = atomic && self.check(r)? == 0;
         if own_tx {
-            self.batch("BEGIN TRANSACTION").await?;
+            let r = self.batch("BEGIN TRANSACTION").await;
+            self.check(r)?;
         }
         let mut affected = Vec::with_capacity(statements.len());
         for (i, sql) in statements.iter().enumerate() {
@@ -423,7 +430,8 @@ impl Session for MssqlSession {
             }
         }
         if own_tx {
-            self.batch("COMMIT TRANSACTION").await?;
+            let r = self.batch("COMMIT TRANSACTION").await;
+            self.check(r)?;
         }
         Ok(affected)
     }

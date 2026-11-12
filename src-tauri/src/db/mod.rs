@@ -198,7 +198,13 @@ pub async fn db_test_connection(app: tauri::AppHandle, conn: ConnConfig, passwor
 pub async fn db_connect(app: tauri::AppHandle, target: Target) -> Result<ServerInfo, String> {
     let slot = slot(&app, &target.session_id);
     let mut guard = slot.lock().await;
-    ready(&app, &target, &mut guard, true).await?.server_info().await
+    match ready(&app, &target, &mut guard, true).await?.server_info().await {
+        Ok(info) => Ok(info),
+        // Sessão antiga que caiu ou ficou inutilizável (ex.: escrita cancelada no meio):
+        // "Conectar"/"Tentar de novo" não pode repetir o mesmo erro — abre uma nova na hora.
+        Err(_) if guard.as_ref().is_some_and(|s| s.is_broken()) => ready(&app, &target, &mut guard, true).await?.server_info().await,
+        Err(e) => Err(e),
+    }
 }
 
 /// Fecha as sessões com esse id ou prefixo (ex.: "meta:<conn>:" ou "<conn>:").

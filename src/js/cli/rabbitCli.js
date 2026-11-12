@@ -402,7 +402,7 @@ async function watch(p, ctx) {
 // ---------- Gravações e log ----------
 
 function captureView(x) {
-  return { id: x.id, name: x.name, conn: connLabel(host.connections().find((c) => c.id === x.conn_id)), mode: x.mode, source: x.source, vhost: x.vhost, active: !!x.active, count: x.count, started: x.started_at ? iso(x.started_at) : undefined, stopped: x.stopped_at ? iso(x.stopped_at) : undefined };
+  return { id: x.id, name: x.name, conn: connLabel(host.connections().find((c) => c.id === x.conn_id)), mode: x.mode, source: x.source, vhost: x.vhost, active: !!x.active, count: x.count, started: x.started_at ? iso(x.started_at) : undefined, stopped: x.stopped_at ? iso(x.stopped_at) : undefined, direct_publishes: x.direct ? { ...x.direct, hint: "Publicadas direto na fila (exchange padrão): o tap não vê; grave com --mode firehose" } : undefined };
 }
 
 async function captures(p) {

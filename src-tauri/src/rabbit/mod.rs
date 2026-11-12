@@ -67,6 +67,8 @@ struct CaptureCtl {
     sink: Arc<Mutex<Option<Channel<CaptureEvent>>>>,
     info: Capture,
     count: Arc<AtomicI64>,
+    /// Tap: publicações diretas detectadas (filas, quantas o tap não viu).
+    direct: Option<Value>,
 }
 
 /// Gravações em andamento (capture_id -> controle).
@@ -249,6 +251,8 @@ pub struct CaptureView {
     #[serde(flatten)]
     capture: Capture,
     active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    direct: Option<Value>,
 }
 
 /// Liga/desliga o tracing (firehose) do vhost preservando descrição, tags e tipo de fila padrão.
@@ -365,14 +369,14 @@ pub async fn rmq_capture_start(app: tauri::AppHandle, conn: RmqConn, spec: Captu
     let sink = Arc::new(Mutex::new(Some(on_event)));
     let count = Arc::new(AtomicI64::new(0));
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-    app.state::<RmqCaptures>().0.lock().unwrap().insert(id, CaptureCtl { stop: Some(stop_tx), sink: sink.clone(), info: info.clone(), count: count.clone() });
+    app.state::<RmqCaptures>().0.lock().unwrap().insert(id, CaptureCtl { stop: Some(stop_tx), sink: sink.clone(), info: info.clone(), count: count.clone(), direct: None });
     for w in warnings {
         emit(&sink, CaptureEvent::Warning { capture_id: id, message: w });
     }
 
     let task = CaptureTask { app: app.clone(), conn, pw, spec, bindings, id, sink, count, tracing_changed };
     tauri::async_runtime::spawn(task.run(listener, stop_rx));
-    Ok(CaptureView { capture: info, active: true })
+    Ok(CaptureView { capture: info, active: true, direct: None })
 }
 
 struct CaptureTask {
@@ -388,6 +392,70 @@ struct CaptureTask {
 }
 
 const FLUSH_EVERY: Duration = Duration::from_millis(300);
+const DIRECT_CHECK_EVERY: Duration = Duration::from_secs(5);
+
+/// Detecta, no modo tap, mensagens publicadas direto na fila (que não passam pelas ligações).
+struct DirectCheck {
+    enabled: bool,
+    /// fila -> publicações no início (`message_stats.publish`); None = ainda sem linha de base.
+    base: HashMap<String, Option<i64>>,
+    /// fila -> mensagens recebidas pelo tap.
+    seen: HashMap<String, i64>,
+    /// fila -> diferença (publicadas - vistas) na verificação anterior.
+    gap: HashMap<String, i64>,
+    warned: bool,
+}
+
+impl DirectCheck {
+    fn new(enabled: bool) -> Self {
+        DirectCheck { enabled, base: HashMap::new(), seen: HashMap::new(), gap: HashMap::new(), warned: false }
+    }
+
+    fn active(&self) -> bool {
+        self.enabled && !self.warned
+    }
+
+    fn seen(&mut self, queues: &[String]) {
+        if self.enabled {
+            for q in queues {
+                *self.seen.entry(q.clone()).or_default() += 1;
+            }
+        }
+    }
+
+    /// Devolve as filas com publicações que o tap não viu (uma vez por gravação).
+    async fn check(&mut self, app: &tauri::AppHandle, conn: &RmqConn, pw: &str, spec: &CaptureSpec) -> Option<(Vec<String>, i64)> {
+        let clients = app.state::<MgmtClients>();
+        let mut missing = Vec::new();
+        let mut missed = 0;
+        for q in &spec.queues {
+            let path = format!("/queues/{}/{}?columns=message_stats.publish", mgmt::seg(&spec.vhost), mgmt::seg(q));
+            let Ok(v) = mgmt::call(&clients, conn, pw, "GET", &path, None).await else { continue };
+            let Some(now) = v.pointer("/message_stats/publish").and_then(Value::as_i64) else {
+                // Fila sem publicações ainda: a linha de base é zero.
+                self.base.entry(q.clone()).or_insert(Some(0));
+                continue;
+            };
+            let base = *self.base.entry(q.clone()).or_insert(Some(now));
+            let Some(base) = base else { continue };
+            let published = now - base;
+            let got = self.seen.get(q).copied().unwrap_or(0);
+            // As estatísticas atrasam alguns segundos: uma linha de base velha deixa uma diferença
+            // fixa. Só avisa se a diferença passa de 3 e continua crescendo (publicações diretas novas).
+            let gap = published - got;
+            let prev = self.gap.insert(q.clone(), gap);
+            if gap >= 3 && prev.is_some_and(|p| gap > p) {
+                missing.push(q.clone());
+                missed += gap;
+            }
+        }
+        if missing.is_empty() {
+            return None;
+        }
+        self.warned = true;
+        Some((missing, missed))
+    }
+}
 const FLUSH_SIZE: usize = 500;
 
 impl CaptureTask {
@@ -419,6 +487,10 @@ impl CaptureTask {
         let mut flushes = 0u32;
         let mut tick = tokio::time::interval(FLUSH_EVERY);
         let mut error: Option<String> = None;
+        // Tap: compara o contador de publicações de cada fila (API de management) com o que
+        // chegou pela fila temporária. Diferença = publicação direta na fila, invisível ao tap.
+        let mut direct = DirectCheck::new(self.spec.mode == "tap");
+        let mut check = tokio::time::interval(DIRECT_CHECK_EVERY);
         loop {
             tokio::select! {
                 _ = &mut stop_rx => break,
@@ -427,6 +499,7 @@ impl CaptureTask {
                         let (ex, rk) = m.deliver.as_ref().map(|d| (d.exchange().clone(), d.routing_key().clone())).unwrap_or_default();
                         let content = m.content.unwrap_or_default();
                         if let Some(mut rec) = amqp::to_record(&self.spec, &self.bindings, &ex, &rk, m.basic_properties.as_ref(), content) {
+                            direct.seen(&rec.queues);
                             rec.conn_id = self.conn.id.clone();
                             rec.capture_id = Some(self.id);
                             batch.push(rec);
@@ -443,6 +516,14 @@ impl CaptureTask {
                         break;
                     }
                 },
+                _ = check.tick(), if direct.active() => {
+                    if let Some((queues, missed)) = direct.check(&self.app, &self.conn, &self.pw, &self.spec).await {
+                        if let Some(c) = self.app.state::<RmqCaptures>().0.lock().unwrap().get_mut(&self.id) {
+                            c.direct = Some(json!({ "queues": queues, "missed": missed }));
+                        }
+                        emit(&self.sink, CaptureEvent::Direct { capture_id: self.id, queues, missed });
+                    }
+                }
                 _ = tick.tick() => {
                     if let Err(e) = self.flush(&mut batch, &mut flushes).await {
                         error = Some(e);
@@ -522,7 +603,7 @@ pub async fn rmq_captures(app: tauri::AppHandle, conn_id: Option<String>) -> Res
             if let Some(a) = active {
                 c.count = c.count.max(a.count.load(Ordering::SeqCst));
             }
-            CaptureView { active: active.is_some(), capture: c }
+            CaptureView { active: active.is_some(), direct: active.and_then(|a| a.direct.clone()), capture: c }
         })
         .collect())
 }

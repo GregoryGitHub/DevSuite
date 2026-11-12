@@ -874,9 +874,28 @@ function captureQueues(info) {
   return info.source.split(", ");
 }
 
+/** Tap que perdeu publicações diretas na fila: para e grava as mesmas filas com Firehose. */
+async function switchToFirehose(capId) {
+  const cap = live.get(capId);
+  if (!cap) return;
+  const c = R.connections.find((x) => x.id === cap.conn_id);
+  if (!c) return;
+  await stopCapture(capId);
+  try {
+    await startCapture({ vhost: cap.vhost, mode: "firehose", queues: cap.queues, exchange: "", routing_key: "#", events: [], name: `${cap.name} (firehose)`, max_body_kb: R.settings.max_body_kb, max_messages: R.settings.max_messages }, c);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function onCaptureEvent(ev) {
   const cap = live.get(ev.capture_id);
   if (ev.kind === "progress" && cap) cap.count = ev.count;
+  else if (ev.kind === "direct") {
+    if (cap) cap.direct = { queues: ev.queues, missed: ev.missed };
+    toast(`${ev.queues.join(", ")}: ${fmtNum(ev.missed)} mensagem(ns) publicada(s) direto na fila (exchange padrão) — o tap não vê essas; o Firehose grava.`, { label: "Gravar com Firehose", run: () => switchToFirehose(ev.capture_id) });
+    renderTree();
+  }
   else if (ev.kind === "warning") toast(ev.message);
   else if (ev.kind === "stopped") {
     live.delete(ev.capture_id);
@@ -979,6 +998,7 @@ const ctx = {
   setTracing: (vh, on) => ops.setTracing(vh, on),
   isCapturing: (vhost, queue) => [...live.values()].some((x) => x.conn_id === conn()?.id && x.vhost === vhost && x.queues.includes(queue)),
   liveCapture: (id) => live.get(id) || null,
+  switchToFirehose,
   onCaptureEvent: (fn) => (captureListeners.add(fn), () => captureListeners.delete(fn)),
   startCapture,
   stopCapture,

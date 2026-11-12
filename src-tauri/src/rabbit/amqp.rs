@@ -259,6 +259,9 @@ fn default_vhost() -> String {
 pub enum CaptureEvent {
     Progress { capture_id: i64, count: i64 },
     Warning { capture_id: i64, message: String },
+    /// Tap: as filas receberam mensagens que não passaram pelas ligações (publicação direta
+    /// na fila pela exchange padrão), que só o Firehose grava.
+    Direct { capture_id: i64, queues: Vec<String>, missed: i64 },
     Stopped { capture_id: i64, count: i64, error: Option<String> },
 }
 

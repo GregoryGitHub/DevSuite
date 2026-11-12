@@ -46,6 +46,7 @@ export function initSettings() {
   });
 
   initCliSetting();
+  initAboutSetting();
 
   settingsBar.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action]");
@@ -92,6 +93,35 @@ function initCliSetting() {
     });
   }
   if (!SOLO_APP) refresh();
+}
+
+/** Configurações → "Sobre": versão, número da build, commit e data (`app_build_info`). */
+function initAboutSetting() {
+  const invoke = window.__TAURI__?.core?.invoke;
+  const info = document.getElementById("setting-about");
+  const copyBtn = document.getElementById("setting-about-copy");
+  if (!info) return;
+  let text = "";
+  const load = async () => {
+    const b = invoke ? await invoke("app_build_info").catch(() => null) : null;
+    if (!b) {
+      info.textContent = "Versão indisponível fora do app.";
+      copyBtn.hidden = true;
+      return;
+    }
+    text = `Dev Suite ${b.version} (build ${b.build}${b.commit ? ` · ${b.commit}` : ""}${b.profile === "debug" ? " · debug" : ""}) · ${b.date}`;
+    info.textContent = text;
+  };
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = "Copiado";
+      setTimeout(() => (copyBtn.textContent = "Copiar"), 1500);
+    } catch {
+      /* sem área de transferência */
+    }
+  });
+  if (!SOLO_APP) load();
 }
 
 export function updateSettingsUI() {

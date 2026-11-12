@@ -72,6 +72,7 @@ export function capturesView(ctx, opts = {}) {
       const mode = CAPTURE_MODES[c.mode] || { short: c.mode, icon: "fa-solid fa-circle-dot" };
       const live = ctx.liveCapture(c.id);
       const count = live ? Math.max(live.count, c.count) : c.count;
+      const direct = c.active && live?.direct;
       capList.append(
         capItem(String(c.id), {
           title: c.name || c.source,
@@ -82,6 +83,7 @@ export function capturesView(ctx, opts = {}) {
           cls: c.error && !c.active ? "err" : "",
           menu: () => [
             c.active ? { label: "Parar gravação", icon: "fa-solid fa-stop", run: () => ctx.stopCapture(c.id) } : null,
+            c.active && c.mode === "tap" ? { label: "Trocar para Firehose", icon: "fa-solid fa-fire", run: () => ctx.switchToFirehose(c.id) } : null,
             { label: "Renomear…", icon: "fa-solid fa-pen", run: () => rename(c) },
             { label: "Gravar de novo (mesma origem)", icon: "fa-solid fa-rotate-right", disabled: c.active, run: () => ctx.dialogs.capture({ vhost: c.vhost, mode: c.mode, queues: c.mode !== "exchange" && c.source && !c.source.startsWith("vhost ") ? c.source.split(", ") : [], exchange: c.mode === "exchange" ? c.source.replace(/ \[.*\]$/, "") : "" }) },
             { label: "Exportar mensagens (JSON)", icon: "fa-solid fa-file-export", run: () => exportFilter({ ...baseFilter(), capture_id: c.id }, `${c.name || "gravacao"}.json`) },
@@ -91,6 +93,17 @@ export function capturesView(ctx, opts = {}) {
           ],
         }),
       );
+      if (direct) {
+        capList.append(
+          el(
+            "div.rmq-cap-direct",
+            {},
+            icon("fa-solid fa-triangle-exclamation"),
+            el("span", {}, `${fmtNum(direct.missed)} publicada(s) direto em ${direct.queues.join(", ")} — o tap não vê.`),
+            el("button.hx-btn.small", { type: "button", onclick: () => ctx.switchToFirehose(c.id) }, "Usar Firehose"),
+          ),
+        );
+      }
     }
   }
 
@@ -437,6 +450,10 @@ export function capturesView(ctx, opts = {}) {
 
   const unsubscribe = ctx.onCaptureEvent((ev) => {
     if (disposed) return;
+    if (ev.kind === "direct") {
+      renderCaptures();
+      return;
+    }
     if (ev.kind === "stopped" || ev.kind === "started") {
       loadCaptures();
       return;

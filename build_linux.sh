@@ -3,6 +3,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+# Força o build.rs a regravar data/commit da build (Configurações → Sobre) a cada execução.
+export DEVSUITE_BUILD_STAMP="$(date +%Y%m%d%H%M%S)"
 
 echo "=== Iniciando Build de Release para Linux ==="
 

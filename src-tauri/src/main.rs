@@ -97,6 +97,18 @@ fn settings_file(app: &tauri::AppHandle) -> PathBuf {
     dir
 }
 
+/// Versão e identificação da build (Configurações → "Sobre"); valores gravados pelo build.rs.
+#[tauri::command]
+fn app_build_info() -> serde_json::Value {
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "build": env!("DEVSUITE_BUILD_NUMBER"),
+        "commit": env!("DEVSUITE_BUILD_COMMIT"),
+        "date": env!("DEVSUITE_BUILD_DATE"),
+        "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
+    })
+}
+
 /// Board kanban das Tarefas (formato em `src/js/utils/kanbanModel.js`). `null` = ainda não existe
 /// (o JS migra o `todos.json` antigo).
 #[tauri::command]
@@ -618,6 +630,7 @@ fn main() {
             cli::cli_reply,
             cli::cli_event,
             cli::cli_info,
+            app_build_info,
             cli::cli_setup,
             cli::vaults::cli_store_read,
             cli::vaults::cli_vault_create

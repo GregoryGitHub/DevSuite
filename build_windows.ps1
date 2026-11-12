@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $env:CARGO_HTTP_CHECK_REVOKE = 'false'
+# Força o build.rs a regravar data/commit da build (Configurações → Sobre) a cada execução.
+$env:DEVSUITE_BUILD_STAMP = (Get-Date -Format 'yyyyMMddHHmmss')
 Set-Location $PSScriptRoot
 
 Write-Host "=== Iniciando Build de Release para Windows ===" -ForegroundColor Green
