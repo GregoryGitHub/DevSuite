@@ -154,7 +154,8 @@ todo-rs/
 │           ├── sqlComplete.js # Autocomplete SQL (tabelas, colunas por alias, palavras-chave) e de colunas em inputs
 │           ├── rabbit.js      # RabbitMQ: orquestrador (conexões, barra lateral, seções, auto-refresh, operações, gravações ativas)
 │           ├── rabbitViews.js # RabbitMQ: tabela genérica + Visão geral, Filas, Exchanges, Conexões, Canais, Consumidores
-│           ├── rabbitQueue.js # RabbitMQ: detalhe da fila (mensagens/consumidores/ligações/detalhes) e da exchange
+│           ├── rabbitQueue.js # RabbitMQ: detalhe da fila (mensagens/gráficos/consumidores/ligações/detalhes) e da exchange
+│           ├── rabbitCharts.js # RabbitMQ: gráfico de série temporal (SVG na largura real, grade, eixos, dica no hover) + seletor de intervalo
 │           ├── rabbitMessage.js # RabbitMQ: detalhe de uma mensagem (propriedades, headers, x-death, corpo JSON/XML/hex)
 │           ├── rabbitLog.js   # RabbitMQ: Gravações (capturas + mensagens do rabbit.db, filtros, ao vivo, republicar, exportar)
 │           ├── rabbitDialogs.js # RabbitMQ: conexão, publicar, mover/copiar, nova fila/exchange/ligação, gravar, preferências
@@ -459,6 +460,7 @@ Dados em `rabbit.db` (SQLite, WAL). Senhas no cofre (`rmq:<connId>`). `conn` = `
 9. **RabbitMQ (monitor e depurador de filas)**:
    - Gestão pela API HTTP do plugin de management; AMQP (amqprs) só para gravar e mover. Conexão = URL do management + usuário (+ host/porta AMQP opcionais). "Ambiente sensível" exige digitar o nome para purgar/excluir/consumir/fechar.
    - Seções: Visão geral (totais, taxas 10 min, alarmes, DLQs com mensagens, filas sem consumidor, nós), Filas, Exchanges, Conexões (fechar), Canais, Consumidores, Gravações. Auto-refresh configurável; a aba de mensagens e as gravações não atualizam sozinhas (espiar é invasivo).
+   - **Gráficos da fila** (aba "Gráficos" do detalhe): "Mensagens na fila" (prontas/não confirmadas/total) e "Taxas de mensagens" (publicação, entrega com/sem ack, ack, e reentrega/get só quando há valor), intervalos 1 min/10 min/1 h/8 h/1 dia como no management oficial (`CHART_RANGES`/`chartQuery`: `lengths_age`/`msg_rates_age` + `_incr`). Só essa aba pede as amostras; taxas = diferença dos contadores cumulativos (`ratePoints`, nunca negativa). Atualiza com o auto-refresh; intervalo em `ui.lists["tab:queue-range"]`.
    - **Espiar** usa `/get` com `ack_requeue_true` (marca `redelivered`); consumir/rejeitar removem e salvam automaticamente no log. Publicar aceita repetição com `{{n}}`, `{{uuid}}`, `{{now}}`, `{{timestamp}}`.
    - **Gravação**: `tap` = fila temporária exclusiva com as ligações das filas (não consome; não vê publicação direta na exchange padrão); `firehose` = liga o tracing do vhost (desliga ao parar, se foi o app que ligou) e grava publish/deliver; `exchange` = exchange + routing key. Mensagens vão em lotes para o `rabbit.db`; o limite (`max_messages`) apaga as mais antigas.
    - **Mover/copiar** nunca usa a API HTTP (perderia mensagens se falhar no meio): transação AMQP por lote; "origem" usa o `x-death`; destino fila é verificado (passive) antes.

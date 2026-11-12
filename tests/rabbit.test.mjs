@@ -95,4 +95,24 @@ assert.match(m.expandTemplate("{{uuid}}", 1), /^[0-9a-f-]{36}$/);
 assert.equal(m.expandTemplate("sem variáveis", 1), "sem variáveis");
 assert.equal(m.expandTemplate("{{outra}}", 1), "{{outra}}");
 
+// --- gráficos da fila (amostras do management, mais nova primeiro)
+assert.equal(m.chartQuery("1h"), "lengths_age=3600&lengths_incr=60&msg_rates_age=3600&msg_rates_incr=60");
+assert.equal(m.chartRange("nope").id, "10m");
+const smp = [{ sample: 30, timestamp: 20000 }, { sample: 10, timestamp: 10000 }, { sample: 0, timestamp: 5000 }];
+assert.deepEqual(m.samplePoints(smp), [{ t: 5000, v: 0 }, { t: 10000, v: 10 }, { t: 20000, v: 30 }]);
+assert.deepEqual(m.ratePoints(smp), [{ t: 10000, v: 2 }, { t: 20000, v: 2 }]);
+// Contador zerado (fila recriada) não vira taxa negativa.
+assert.deepEqual(m.ratePoints([{ sample: 1, timestamp: 2000 }, { sample: 50, timestamp: 1000 }]), [{ t: 2000, v: 0 }]);
+assert.deepEqual(m.niceScale(0), { max: 4, step: 1 });
+assert.deepEqual(m.niceScale(37), { max: 40, step: 10 });
+assert.deepEqual(m.niceScale(0.9), { max: 1, step: 0.25 });
+const qs = m.queueChartSeries({
+  messages_ready_details: { samples: smp },
+  message_stats: { publish_details: { samples: smp }, redeliver_details: { samples: [{ sample: 0, timestamp: 2 }, { sample: 0, timestamp: 1 }] }, get_details: { samples: smp } },
+});
+assert.deepEqual(qs.lens.map((s) => s.label), ["Prontas", "Não confirmadas", "Total"]);
+assert.equal(qs.lens[0].points.length, 3);
+// Publicação/entrega/ack sempre; as outras só com algum valor (get tem, reentrega é toda zero).
+assert.deepEqual(qs.rates.map((s) => s.label), ["Publicação", "Entrega (ack manual)", "Ack do consumidor", "Get (ack manual)"]);
+
 console.log("rabbit.test.mjs: ok");

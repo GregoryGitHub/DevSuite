@@ -15,7 +15,10 @@ import {
   queueFeatures,
   rate,
   isDeadLetterQueue,
+  chartQuery,
+  queueChartSeries,
 } from "../utils/rabbitModel.js";
+import { timeChart, rangePicker } from "./rabbitCharts.js";
 import { createTable, featureHtml, esc } from "./rabbitViews.js";
 import { messageDetail, jsonBlock } from "./rabbitMessage.js";
 
@@ -85,6 +88,7 @@ export function queueView(ctx, { vhost, name }) {
   const tabs = tabsBar(
     [
       { id: "messages", label: "Mensagens" },
+      { id: "charts", label: "Gráficos" },
       { id: "consumers", label: "Consumidores" },
       { id: "bindings", label: "Ligações" },
       { id: "details", label: "Detalhes" },
@@ -95,6 +99,8 @@ export function queueView(ctx, { vhost, name }) {
       ctx.setDetailTab("queue", id);
       tabs.set(id);
       showTab();
+      // Os gráficos precisam das amostras (a consulta normal da fila não as traz).
+      if (id === "charts") refresh().catch((e) => ctx.toast(String(e)));
     },
   );
   const body = el("div.rmq-detail-body");
@@ -353,9 +359,40 @@ export function queueView(ctx, { vhost, name }) {
     );
   }
 
+  // ----- Gráficos (amostras do management: profundidade e taxas, como no client oficial) -----
+  let chartRangeId = ctx.detailTab("queue-range") || "10m";
+  const lenChart = timeChart({ title: "Mensagens na fila", iconCls: "fa-solid fa-layer-group", fmt: fmtNum });
+  const rateChart = timeChart({ title: "Taxas de mensagens (leitura e escrita)", iconCls: "fa-solid fa-chart-line", fmt: fmtRate });
+  const chartsPane = el(
+    "div.rmq-pane.rmq-qcharts",
+    {},
+    el(
+      "div.rmq-qcharts-head",
+      {},
+      rangePicker(chartRangeId, (id) => {
+        chartRangeId = id;
+        ctx.setDetailTab("queue-range", id);
+        refresh().catch((e) => ctx.toast(String(e)));
+      }),
+      el("span.rmq-sub", {}, "Atualiza junto com o auto-refresh. As amostras dependem da retenção de estatísticas do servidor."),
+    ),
+    lenChart.root,
+    rateChart.root,
+  );
+
+  function paintCharts() {
+    if (!q) return;
+    const { lens, rates } = queueChartSeries(q);
+    lenChart.update(lens);
+    rateChart.update(rates);
+  }
+
   function showTab() {
     body.innerHTML = "";
-    if (tab === "messages") {
+    if (tab === "charts") {
+      body.append(chartsPane);
+      paintCharts();
+    } else if (tab === "messages") {
       body.append(msgPane);
       paintMessages();
     } else if (tab === "consumers") {
@@ -389,7 +426,7 @@ export function queueView(ctx, { vhost, name }) {
 
   async function refresh() {
     try {
-      q = await ctx.get(qPath);
+      q = await ctx.get(tab === "charts" ? `${qPath}?${chartQuery(chartRangeId)}` : qPath);
     } catch (e) {
       if (String(e).includes("404")) {
         stats.innerHTML = "";
@@ -401,6 +438,7 @@ export function queueView(ctx, { vhost, name }) {
     if (disposed) return;
     paintHead();
     if (tab === "details") paintDetails();
+    if (tab === "charts") paintCharts();
     if (tab === "bindings") loadBindings().catch(() => {});
   }
 

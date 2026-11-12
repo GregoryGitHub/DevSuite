@@ -15,6 +15,10 @@
   --rmq-s1: #fb923c;
   --rmq-s2: #a78bfa;
   --rmq-s3: #38bdf8;
+  --rmq-s4: #34d399;
+  --rmq-s5: #f472b6;
+  --rmq-s6: #facc15;
+  --rmq-s7: #94a3b8;
   --rmq-row-sel: rgba(251, 146, 60, 0.16);
   --rmq-row-hover: rgba(var(--fg-rgb), 0.035);
   --rmq-dlq: rgba(239, 68, 68, 0.07);
@@ -30,6 +34,10 @@
   --rmq-s1: #ea580c;
   --rmq-s2: #7c3aed;
   --rmq-s3: #0284c7;
+  --rmq-s4: #059669;
+  --rmq-s5: #db2777;
+  --rmq-s6: #ca8a04;
+  --rmq-s7: #64748b;
   --rmq-row-sel: rgba(234, 88, 12, 0.11);
   --rmq-dlq: rgba(220, 38, 38, 0.05);
   --rmq-fresh: rgba(234, 88, 12, 0.09);
@@ -797,6 +805,139 @@ button.rmq-tile:hover {
 .rmq-legend.s3 i {
   stroke: var(--rmq-s3);
   background: var(--rmq-s3);
+}
+
+.rmq-spark-line.s4,
+.rmq-legend.s4 i {
+  stroke: var(--rmq-s4);
+  background: var(--rmq-s4);
+}
+
+.rmq-spark-line.s5,
+.rmq-legend.s5 i {
+  stroke: var(--rmq-s5);
+  background: var(--rmq-s5);
+}
+
+.rmq-spark-line.s6,
+.rmq-legend.s6 i {
+  stroke: var(--rmq-s6);
+  background: var(--rmq-s6);
+}
+
+.rmq-spark-line.s7,
+.rmq-legend.s7 i {
+  stroke: var(--rmq-s7);
+  background: var(--rmq-s7);
+}
+
+/* Gráficos de série temporal (aba "Gráficos" da fila: rabbitCharts.js). */
+.rmq-qcharts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  overflow-y: auto;
+}
+
+.rmq-qcharts-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rmq-tc-ranges {
+  display: flex;
+  gap: 4px;
+}
+
+.rmq-tc-ranges .rmq-chip.on {
+  color: var(--hx-accent);
+  border-color: var(--hx-accent);
+  background: var(--nt-yellow-soft);
+}
+
+.rmq-tc-plot {
+  position: relative;
+  height: 170px;
+}
+
+.rmq-tc-svg {
+  display: block;
+  overflow: visible;
+}
+
+.rmq-tc-grid {
+  stroke: rgba(var(--fg-rgb), 0.08);
+  stroke-width: 1;
+}
+
+.rmq-tc-axis {
+  fill: var(--nt-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rmq-tc-area {
+  stroke: none;
+  opacity: 0.08;
+}
+
+.rmq-tc-area.s1 { fill: var(--rmq-s1); }
+.rmq-tc-area.s2 { fill: var(--rmq-s2); }
+.rmq-tc-area.s3 { fill: var(--rmq-s3); }
+.rmq-tc-area.s4 { fill: var(--rmq-s4); }
+.rmq-tc-area.s5 { fill: var(--rmq-s5); }
+.rmq-tc-area.s6 { fill: var(--rmq-s6); }
+.rmq-tc-area.s7 { fill: var(--rmq-s7); }
+
+.rmq-tc-guide {
+  stroke: rgba(var(--fg-rgb), 0.3);
+  stroke-dasharray: 3 3;
+}
+
+.rmq-tc-dot {
+  stroke: var(--nt-bg, #1e1e1e);
+  stroke-width: 1.5;
+}
+
+.rmq-tc-dot.s1 { fill: var(--rmq-s1); }
+.rmq-tc-dot.s2 { fill: var(--rmq-s2); }
+.rmq-tc-dot.s3 { fill: var(--rmq-s3); }
+.rmq-tc-dot.s4 { fill: var(--rmq-s4); }
+.rmq-tc-dot.s5 { fill: var(--rmq-s5); }
+.rmq-tc-dot.s6 { fill: var(--rmq-s6); }
+.rmq-tc-dot.s7 { fill: var(--rmq-s7); }
+
+.rmq-tc-tip {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 9px;
+  border: 1px solid var(--nt-sep);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--nt-muted);
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--nt-popover, var(--nt-bg));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, calc(0.25 * var(--shade-k, 1)));
+}
+
+.rmq-tc-tip-time {
+  font-weight: 600;
+  color: var(--nt-text);
+}
+
+.rmq-tc-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: 12px;
+  color: var(--nt-muted);
 }
 
 .rmq-legends {

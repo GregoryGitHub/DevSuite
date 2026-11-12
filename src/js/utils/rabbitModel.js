@@ -439,3 +439,74 @@ export function expandTemplate(text, n, now = Date.now()) {
     return String(now);
   });
 }
+
+// ---------- Gráficos de monitoramento (fila/exchange) ----------
+
+/** Intervalos dos gráficos (os mesmos do management oficial): `age`/`incr` em segundos. */
+export const CHART_RANGES = [
+  { id: "1m", label: "1 min", age: 60, incr: 5 },
+  { id: "10m", label: "10 min", age: 600, incr: 5 },
+  { id: "1h", label: "1 h", age: 3600, incr: 60 },
+  { id: "8h", label: "8 h", age: 28800, incr: 600 },
+  { id: "1d", label: "1 dia", age: 86400, incr: 1800 },
+];
+
+export const chartRange = (id) => CHART_RANGES.find((r) => r.id === id) || CHART_RANGES[1];
+
+/** Parâmetros da API para devolver amostras de profundidade e de taxas no intervalo. */
+export function chartQuery(rangeId) {
+  const r = chartRange(rangeId);
+  return `lengths_age=${r.age}&lengths_incr=${r.incr}&msg_rates_age=${r.age}&msg_rates_incr=${r.incr}`;
+}
+
+/** Amostras da API ([{sample, timestamp}], mais nova primeiro) → pontos [{t, v}] em ordem de tempo. */
+export function samplePoints(samples) {
+  return (samples || [])
+    .filter((s) => Number.isFinite(s?.timestamp) && Number.isFinite(s?.sample))
+    .map((s) => ({ t: s.timestamp, v: s.sample }))
+    .sort((a, b) => a.t - b.t);
+}
+
+/** Contadores cumulativos → taxa por segundo entre amostras vizinhas (contador zerado = 0, nunca negativo). */
+export function ratePoints(samples) {
+  const p = samplePoints(samples);
+  const out = [];
+  for (let i = 1; i < p.length; i++) {
+    const dt = (p[i].t - p[i - 1].t) / 1000;
+    out.push({ t: p[i].t, v: dt > 0 ? Math.max(0, (p[i].v - p[i - 1].v) / dt) : 0 });
+  }
+  return out;
+}
+
+/** Topo "redondo" do eixo Y e o passo das linhas de grade (1/2/5 × 10^n). */
+export function niceScale(max, ticks = 4) {
+  if (!(max > 0)) return { max: ticks, step: 1 };
+  const raw = max / ticks;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) || 10 * mag;
+  return { max: Math.ceil(max / step - 1e-9) * step, step };
+}
+
+/** Séries dos gráficos de uma fila: profundidade e taxas (só as taxas que o servidor devolveu). */
+export function queueChartSeries(q) {
+  const lens = [
+    { key: "messages_ready", label: "Prontas", cls: "s1" },
+    { key: "messages_unacknowledged", label: "Não confirmadas", cls: "s2" },
+    { key: "messages", label: "Total", cls: "s3" },
+  ].map((s) => ({ label: s.label, cls: s.cls, points: samplePoints(q?.[`${s.key}_details`]?.samples) }));
+  const ms = q?.message_stats || {};
+  const RATES = [
+    { key: "publish", label: "Publicação", cls: "s1", always: true },
+    { key: "deliver", label: "Entrega (ack manual)", cls: "s3", always: true },
+    { key: "deliver_no_ack", label: "Entrega (auto ack)", cls: "s4" },
+    { key: "ack", label: "Ack do consumidor", cls: "s2", always: true },
+    { key: "redeliver", label: "Reentrega", cls: "s6" },
+    { key: "get", label: "Get (ack manual)", cls: "s5" },
+    { key: "get_no_ack", label: "Get (auto ack)", cls: "s7" },
+    { key: "get_empty", label: "Get vazio", cls: "s7" },
+  ];
+  const rates = RATES.map((s) => ({ ...s, points: ratePoints(ms[`${s.key}_details`]?.samples) })).filter(
+    (s) => s.always || s.points.some((p) => p.v > 0),
+  );
+  return { lens, rates: rates.map(({ label, cls, points }) => ({ label, cls, points })) };
+}
