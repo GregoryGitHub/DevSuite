@@ -376,7 +376,7 @@ export function createExplorer(ctx, { treeEl, searchEl }) {
     const status = n.loading ? '<i class="fa-solid fa-spinner fa-spin dbx-spin"></i>' : n.error ? `<i class="fa-solid fa-triangle-exclamation dbx-err" title="${escapeHtml(n.error)}"></i>` : "";
     const color = n.kind === "conn" && conn?.color ? ` style="--conn:${conn.color}"` : "";
     return (
-      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}${n.kind === "conn" && conn?.color ? " colored" : ""}" data-key="${escapeHtml(n.key)}"${(n.kind === "conn" && !query) || n.kind === "query" ? ' draggable="true"' : ""}${n.title ? ` title="${escapeHtml(n.title)}"` : ""} style="padding-left:${6 + depth * 14}px"${color}>` +
+      `<div class="dbx-row k-${n.kind}${n.key === selected ? " sel" : ""}${n.flag ? " flag" : ""}" data-key="${escapeHtml(n.key)}"${(n.kind === "conn" && !query) || n.kind === "query" ? ' draggable="true"' : ""}${n.title ? ` title="${escapeHtml(n.title)}"` : ""} style="padding-left:${6 + depth * 14}px"${color}>` +
       `<span class="dbx-caret">${exp ? `<i class="fa-solid fa-chevron-${open ? "down" : "right"}"></i>` : ""}</span>` +
       `<i class="${ic} dbx-icon"></i><span class="dbx-label">${escapeHtml(n.label)}</span>${extra}${meta}${status}</div>` +
       (n.error && n.kind === "conn" ? `<div class="dbx-error" style="padding-left:${26 + depth * 14}px">${escapeHtml(n.error)}</div>` : "")

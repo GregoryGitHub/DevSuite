@@ -962,7 +962,7 @@ function folderHeader(coll, folder, count, depth = 0) {
   const head = el("div.nt-group-label.hx-folder-head", { draggable: ui.editingFolderId !== folder.id });
   if (depth) head.style.setProperty("--depth", depth);
   head.classList.toggle("collapsed", !!folder.collapsed);
-  head.append(icon("fa-solid fa-chevron-down hx-folder-caret"), icon(folder.collapsed ? "fa-regular fa-folder" : "fa-regular fa-folder-open"));
+  head.append(icon("fa-solid fa-chevron-down hx-folder-caret"), icon(folder.collapsed ? "fa-solid fa-folder" : "fa-solid fa-folder-open"));
   if (ui.editingFolderId === folder.id) {
     const input = el("input.nt-folder-input", { value: folder.name, maxLength: 80 });
     let done = false;
@@ -1207,8 +1207,41 @@ function renderEditor() {
   renderResponse(responses.get(currentKey()) || null);
 }
 
+// Última coleção/requisição aberta: volta a ela ao reabrir o app (localStorage, sem gravar o http.json).
+const LAST_KEY = "hx-last";
+
+function rememberLast() {
+  if (!ui.scope) return;
+  const value = JSON.stringify({ scope: ui.scope, id: ui.selectedId });
+  try {
+    if (localStorage.getItem(LAST_KEY) !== value) localStorage.setItem(LAST_KEY, value);
+  } catch {}
+}
+
+function restoreLast() {
+  let last = null;
+  try {
+    last = JSON.parse(localStorage.getItem(LAST_KEY) || "null");
+  } catch {}
+  if (!last || typeof last.scope !== "string") return false;
+  const { scope, id } = last;
+  if (scope === "history") {
+    ui.scope = scope;
+    ui.selectedId = findHistory(id) ? id : null;
+    return true;
+  }
+  if (scope !== "all") {
+    const cid = Number(scope.slice(2));
+    if (!scope.startsWith("c:") || !findColl(cid)) return false;
+  }
+  ui.scope = scope;
+  ui.selectedId = findReq(id) ? id : null;
+  return true;
+}
+
 export function renderHttp() {
   if (!data()) return;
+  rememberLast();
   renderSidebar();
   renderList();
   renderChrome();
@@ -1525,11 +1558,58 @@ export function setHttpData(raw) {
     seedExamples(state.http);
     saveSoon();
   }
-  if (!ui.scope) ui.scope = `c:${state.http.collections[0].id}`;
+  if (!ui.scope && !restoreLast()) ui.scope = `c:${state.http.collections[0].id}`;
   renderHttp();
 }
 
+// Largura da lista de requisições (desktop), arrastando a borda direita; fica no localStorage.
+const LIST_W_KEY = "hx-list-w";
+const listWidth = (w) => Math.round(Math.min(Math.max(w, 220), Math.max(220, Math.min(720, window.innerWidth * 0.5))));
+
+function initListResize() {
+  const split = document.getElementById("hx-list-split");
+  if (!split) return;
+  const pane = split.previousElementSibling;
+  const apply = (w) => appEl.style.setProperty("--nt-list-w", `${listWidth(w)}px`);
+  try {
+    const saved = Number(localStorage.getItem(LIST_W_KEY)) || 0;
+    if (saved) apply(saved);
+  } catch {}
+  split.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const start = pane.getBoundingClientRect().width;
+    let value = start;
+    split.setPointerCapture(e.pointerId);
+    document.body.classList.add("db-resizing-x");
+    const move = (ev) => {
+      value = listWidth(start + ev.clientX - startX);
+      apply(value);
+    };
+    const up = () => {
+      split.removeEventListener("pointermove", move);
+      split.removeEventListener("pointerup", up);
+      split.removeEventListener("pointercancel", up);
+      document.body.classList.remove("db-resizing-x");
+      try {
+        localStorage.setItem(LIST_W_KEY, String(value));
+      } catch {}
+    };
+    split.addEventListener("pointermove", move);
+    split.addEventListener("pointerup", up);
+    split.addEventListener("pointercancel", up);
+  });
+  split.addEventListener("dblclick", () => {
+    appEl.style.removeProperty("--nt-list-w");
+    try {
+      localStorage.removeItem(LIST_W_KEY);
+    } catch {}
+  });
+}
+
 export function initHttp() {
+  initListResize();
   initHttpEditor({
     getScope: () => scopeFor(currentRequest()),
     getCollection: (req) => findColl(req.collection_id),

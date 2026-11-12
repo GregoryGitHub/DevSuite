@@ -282,10 +282,6 @@ body.db-resizing-y * {
   color: #22d3ee;
 }
 
-.dbx-row.colored {
-  box-shadow: inset 3px 0 0 var(--conn);
-}
-
 .dbx-label {
   min-width: 0;
   overflow: hidden;

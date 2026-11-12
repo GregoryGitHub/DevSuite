@@ -97,10 +97,14 @@ export function capturesView(ctx, opts = {}) {
         capList.append(
           el(
             "div.rmq-cap-direct",
-            {},
+            { title: `Filas: ${direct.queues.join(", ")}` },
             icon("fa-solid fa-triangle-exclamation"),
-            el("span", {}, `${fmtNum(direct.missed)} publicada(s) direto em ${direct.queues.join(", ")} — o tap não vê.`),
-            el("button.hx-btn.small", { type: "button", onclick: () => ctx.switchToFirehose(c.id) }, "Usar Firehose"),
+            el(
+              "span",
+              {},
+              `${fmtNum(direct.missed)} mensagem(ns) publicada(s) direto na fila${direct.queues.length > 1 ? ` (${direct.queues.length} filas)` : ""}. O tap só vê o que passa por uma exchange.`,
+            ),
+            el("button.hx-btn.small", { type: "button", onclick: () => ctx.switchToFirehose(c.id) }, icon("fa-solid fa-fire"), " Usar Firehose"),
           ),
         );
       }

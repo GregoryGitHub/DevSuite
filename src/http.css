@@ -210,10 +210,29 @@ body.desktop-mode #view-http {
 .hx-dot-status.fail,
 .hx-dot-status.err { background: var(--hx-fail); }
 
+/* Largura da lista de requisições: alça na borda direita (http.js, initListResize). A borda
+   da lista já desenha a linha; a alça só aparece ao passar o mouse/arrastar. */
+.hx-list-split {
+  margin: 0 -3px 0 -2px;
+}
+
+.hx-list-split::after {
+  background: transparent;
+}
+
+body:not(.desktop-mode) .hx-list-split {
+  display: none;
+}
+
 .hx-folder-head {
   cursor: pointer;
   user-select: none;
   border-radius: 6px;
+}
+
+/* Nome da pasta em peso normal (o .nt-group-label das Notas é negrito). */
+.nt-group-label.hx-folder-head {
+  font-weight: 500;
 }
 
 /* Subfolders: header, requests and "empty" note indented by depth. */
@@ -2337,6 +2356,8 @@ body.desktop-mode .hx-sidebar-actions .nt-new-folder {
 body.desktop-mode .hx-folder-head {
   margin-top: 6px;
   padding: 6px 8px;
+  font-size: 13px;
+  color: var(--nt-text);
 }
 
 body.desktop-mode .hx-folder-head:hover {
