@@ -1281,6 +1281,13 @@ body.desktop-mode.maximized .app {
   border: none;
 }
 
+/* Windows: a janela desktop tem a sombra nativa (DWM), que já arredonda os cantos e desenha a
+   borda de 1 px. Com o raio/borda do CSS ficavam duas bordas e um vão transparente nos cantos. */
+html.os-windows body.desktop-mode .app {
+  border-radius: 0;
+  border: none;
+}
+
 body.desktop-mode .window-bar,
 body.desktop-mode .bottom-nav {
   display: none !important;

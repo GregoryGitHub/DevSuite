@@ -1208,13 +1208,18 @@ function renderEditor() {
 }
 
 // Última coleção/requisição aberta: volta a ela ao reabrir o app (localStorage, sem gravar o http.json).
+// Grava só quando o estado DESTA janela muda: a principal (na bandeja) também renderiza o HTTP e,
+// comparando com o localStorage, regravaria o seu estado antigo por cima do da janela solta.
 const LAST_KEY = "hx-last";
+let lastWritten = null;
 
 function rememberLast() {
   if (!ui.scope) return;
-  const value = JSON.stringify({ scope: ui.scope, id: ui.selectedId });
+  const value = JSON.stringify({ scope: ui.scope, id: ui.selectedId, reqTab: ui.reqTab });
+  if (value === lastWritten) return;
+  lastWritten = value;
   try {
-    if (localStorage.getItem(LAST_KEY) !== value) localStorage.setItem(LAST_KEY, value);
+    localStorage.setItem(LAST_KEY, value);
   } catch {}
 }
 
@@ -1225,6 +1230,7 @@ function restoreLast() {
   } catch {}
   if (!last || typeof last.scope !== "string") return false;
   const { scope, id } = last;
+  if (typeof last.reqTab === "string") ui.reqTab = last.reqTab;
   if (scope === "history") {
     ui.scope = scope;
     ui.selectedId = findHistory(id) ? id : null;
@@ -1558,7 +1564,9 @@ export function setHttpData(raw) {
     seedExamples(state.http);
     saveSoon();
   }
-  if (!ui.scope && !restoreLast()) ui.scope = `c:${state.http.collections[0].id}`;
+  // Sempre relê (também ao reatachar: a janela solta pode ter mudado a requisição aberta).
+  if (!restoreLast() && !ui.scope) ui.scope = `c:${state.http.collections[0].id}`;
+  lastWritten = JSON.stringify({ scope: ui.scope, id: ui.selectedId, reqTab: ui.reqTab });
   renderHttp();
 }
 
@@ -1639,6 +1647,8 @@ export function initHttp() {
   });
 
   appEl.addEventListener("click", (e) => {
+    // Abas da requisição (httpEditor.js) mudam ui.reqTab sem passar pelo renderHttp.
+    if (e.target.closest(".hx-tab")) queueMicrotask(rememberLast);
     const side = e.target.closest(".hx-side-switch [data-side]");
     if (side) {
       ui.side = side.dataset.side;
