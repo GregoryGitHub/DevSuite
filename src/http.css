@@ -1680,7 +1680,9 @@ body.desktop-mode #view-http {
   padding: 8px 14px;
   border: 1px solid var(--nt-sep-strong);
   border-radius: 10px;
-  background: rgba(42, 42, 44, 0.97);
+  /* Tokens do tema: superfície elevada (escura no escuro, branca no claro) e o texto do tema. */
+  background: var(--c-elevated);
+  color: var(--nt-text);
   box-shadow: 0 10px 28px rgba(0, 0, 0, calc(0.5 * var(--shade-k)));
   font-size: 12px;
   animation: ntPop 0.15s ease;
