@@ -268,6 +268,7 @@ function liveNote(wanted, opts) {
 async function update(p) {
   const note = liveNote(p.note);
   const html = await ensureContent(note);
+  const oldTitle = host.titleOf(note);
   const tpl = blocks(html);
   const first = tpl.content.firstElementChild;
   let changed = false;
@@ -295,7 +296,7 @@ async function update(p) {
   }
   if (!changed) throw new CliError("usage", "Nada para alterar (use --body, --append, --title, --tag ou --add-tag)");
   note.content = tpl.innerHTML;
-  host.changed(note);
+  host.changed(note, oldTitle);
   await host.flush();
   return summary({ notes: state.notes, folders: state.folders, live: true }, note);
 }

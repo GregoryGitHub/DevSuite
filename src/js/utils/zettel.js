@@ -48,6 +48,33 @@ export function noteLinks(html) {
   return out;
 }
 
+/** Alvo de um link pelo título: sem pasta, `#seção` nem `.md` (`[[pasta/Nota.md#x]]` = "Nota"). */
+export const linkTargetKey = (t) => fold(String(t).split("#")[0].split("/").pop().replace(/\.md$/i, ""));
+
+/**
+ * A nota `id` foi renomeada de `oldTitle` para `newTitle`: os links para ela (pelo id e, com
+ * `byTitle`, os pendentes `data-target` com o título antigo) passam a apontar para o id com o
+ * texto novo; links com apelido mantêm o texto. Devolve o HTML novo ou null se nada mudou.
+ */
+export function retargetLinks(html, id, oldTitle, newTitle, { byTitle = true } = {}) {
+  if (!html || !html.includes("nt-link")) return null;
+  const oldKey = linkTargetKey(oldTitle);
+  let changed = false;
+  const out = html.replace(/<a\b([^>]*\bclass="nt-link"[^>]*)>([\s\S]*?)<\/a>/gi, (whole, attrs, inner) => {
+    const note = /\bdata-note="(\d+)"/.exec(attrs);
+    const target = /\bdata-target="([^"]*)"/.exec(attrs);
+    const hit = note ? Number(note[1]) === id : byTitle && !!target && !!oldKey && linkTargetKey(unescapeHtml(target[1])) === oldKey;
+    if (!hit) return whole;
+    let a = attrs;
+    if (!note) a = a.replace(/\s*\bdata-target="[^"]*"/, "") + ` data-note="${id}"`;
+    const text = /\bdata-alias\b/.test(a) ? inner : escapeHtml(newTitle);
+    const next = `<a${a}>${text}</a>`;
+    if (next !== whole) changed = true;
+    return next;
+  });
+  return changed ? out : null;
+}
+
 /** "Título|apelido" digitado entre [[ ]] -> { title, alias }. */
 export function splitLinkText(text) {
   const i = text.indexOf("|");

@@ -16,8 +16,30 @@ assert.deepEqual(z.noteLinks('<p><a class="nt-link" data-target="">x</a></p>'), 
 assert.deepEqual(z.splitLinkText(" Título | outro texto "), { title: "Título", alias: "outro texto" });
 assert.deepEqual(z.splitLinkText("Só título"), { title: "Só título", alias: "" });
 
+// --- renomear a nota alvo: retargetLinks
+{
+  const byId = z.linkHtml({ id: 7, title: "Antigo" });
+  const pend = '<a class="nt-link" contenteditable="false" data-target="pasta/antigo.md#Seção">Antigo</a>';
+  const alias = '<a class="nt-link" contenteditable="false" data-note="7" data-alias="">meu texto</a>';
+  const other = z.linkHtml({ id: 8, title: "Outra" });
+  const html = `<h1>B</h1><p>${byId} ${pend} ${alias} ${other}</p>`;
+  const out = z.retargetLinks(html, 7, "Antigo", "Novo & bom");
+  assert.equal((out.match(/data-note="7"/g) || []).length, 3, "id e pendente pelo título apontam para o id");
+  assert.ok(!out.includes("data-target"), "pendente resolvido");
+  assert.equal((out.match(/>Novo &amp; bom</g) || []).length, 2, "texto novo (escapado)");
+  assert.ok(out.includes(">meu texto</a>"), "apelido mantém o texto");
+  assert.ok(out.includes(other), "link para outra nota intacto");
+  assert.deepEqual(z.noteLinks(out), [7, 8]);
+  // título antigo que é de outra nota: só os links pelo id
+  const onlyId = z.retargetLinks(html, 7, "Antigo", "Novo", { byTitle: false });
+  assert.ok(onlyId.includes('data-target="pasta/antigo.md#Seção"'));
+  assert.equal(z.retargetLinks(`<p>${other}</p>`, 7, "Antigo", "Novo"), null);
+  assert.equal(z.retargetLinks(z.linkHtml({ id: 7, title: "Novo" }), 7, "Antigo", "Novo"), null, "já atualizado = null");
+  assert.equal(z.linkTargetKey("a/Nota Á.md#x"), "nota a");
+}
+
 // --- propriedades
-const p = z.normalizeProps({ tags: ["#rust", "Rust", "a b", ""], aliases: "um, dois", type: "permanent", extra: { x: 1 } });
+const p =z.normalizeProps({ tags: ["#rust", "Rust", "a b", ""], aliases: "um, dois", type: "permanent", extra: { x: 1 } });
 assert.deepEqual(p.tags, ["rust", "a-b"]);
 assert.deepEqual(p.aliases, ["um", "dois"]);
 assert.deepEqual(p.extra, { x: "1" });

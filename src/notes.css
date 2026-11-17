@@ -1503,6 +1503,58 @@ body.maximized .win-btn .ic-restore {
   border-left: none;
 }
 
+/* Modo zen (só desktop, com a nota aberta): sem pastas, lista nem barra; a nota centralizada.
+   Grafo e diff ignoram o modo (data-view preenchido). A barra reaparece ao passar o mouse. */
+body.desktop-mode .notes-app.zen[data-view=""] :is(.nt-sidebar, .nt-sb-split, .nt-list-pane, .nt-tb-sidebar, .nt-tb-list),
+body.desktop-mode .notes-app.zen[data-view=""] .nt-tb-editor > :not(.nt-tb-spacer, .nt-zen-btn, [data-theme-toggle], .win-caption) {
+  display: none !important;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-toolbar {
+  border-bottom-color: transparent;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-tb-editor {
+  border-left: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-toolbar:hover .nt-tb-editor,
+body.desktop-mode .notes-app.zen[data-view=""] .nt-tb-editor:focus-within {
+  opacity: 1;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] [data-theme-toggle] {
+  display: inline-flex !important;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-editor-scroll {
+  /* % do padding = largura do painel: coluna de texto de até 760px no centro. */
+  padding: 24px max(48px, calc((100% - 760px) / 2)) 0;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-editor-date {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+body.desktop-mode .notes-app.zen[data-view=""] .nt-editor-date:hover,
+body.desktop-mode .notes-app.zen[data-view=""] .nt-editor-date:focus-within {
+  opacity: 1;
+}
+
+body.desktop-mode .notes-app.zen .nt-zen-btn i::before {
+  content: "\f066"; /* compress */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.desktop-mode .notes-app.zen .nt-tb-editor,
+  body.desktop-mode .notes-app.zen .nt-editor-date {
+    transition: none;
+  }
+}
+
 /* Columns */
 body.desktop-mode .nt-sidebar {
   width: var(--nt-sb-w);

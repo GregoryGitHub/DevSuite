@@ -31,7 +31,7 @@ import { noteTitle, notePreview, noteIsEmpty, noteMatches, sanitizeHtml, escapeH
 import { htmlToMarkdown, markdownToHtml } from "../utils/markdown.js";
 import {
   TitleIndex, noteLinks, normalizeProps, propsEmpty, propsToYaml, parseFrontMatter, splitFrontMatter, newZid,
-  parseQuery, hasFilters, matchesFilters, backlinkMap, buildGraph, tagCounts, fold, dateOnly,
+  parseQuery, hasFilters, matchesFilters, backlinkMap, buildGraph, tagCounts, fold, dateOnly, retargetLinks, linkTargetKey,
 } from "../utils/zettel.js";
 import { setLinkProvider } from "./noteLinks.js";
 import { createPropsPanel } from "./noteProps.js";
@@ -460,14 +460,87 @@ function runSearch() {
 
 function saveNotesSoon() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushNotesSave, 400);
+  saveTimer = setTimeout(() => flushNotesSave({ renames: false }), 400);
 }
 
-/** Saves the edited notes (only the changed ones, one by one). Empty notes are not stored. */
-function flushNotesSave() {
+/**
+ * Saves the edited notes (only the changed ones, one by one). Empty notes are not stored.
+ * `renames` = também leva um título novo às notas que apontam para ela (o autosave do
+ * meio da digitação não faz isso: espera a pausa maior de `queueRenames`).
+ */
+function flushNotesSave({ renames = true } = {}) {
   clearTimeout(saveTimer);
   saveTimer = null;
+  if (renames && renameTimer) propagateRenames();
   saveNoteContent(state.notes.filter((n) => n.dirty && (n.deleted_at || !isEmptyNote(n))), storeError);
+}
+
+// ---------- Renomear: links [[ ]] das outras notas ----------
+// O link guarda o id da nota, mas o texto (e no cofre o `[[Título]]` do .md) é o título. Sem
+// isto, só as notas abertas depois da renomeação eram corrigidas (hydrateLinks), e no cofre um
+// .md com `[[Antigo]]` ficava com o link quebrado. `titleBase` = título que as outras notas
+// conhecem (o de quando a nota foi aberta / da última propagação).
+const titleBase = new Map();
+let renameTimer = null;
+
+function rememberTitle(note, title = titleOf(note)) {
+  if (note && !titleBase.has(note.id) && title) titleBase.set(note.id, title);
+}
+
+function queueRenames() {
+  clearTimeout(renameTimer);
+  renameTimer = setTimeout(propagateRenames, 1500);
+}
+
+function propagateRenames() {
+  clearTimeout(renameTimer);
+  renameTimer = null;
+  const runs = [renamesDone];
+  for (const [id, oldTitle] of titleBase) {
+    const note = findNote(id);
+    if (!note || note.content === undefined) continue;
+    const title = titleOf(note);
+    if (!title || title === oldTitle || note.deleted_at) continue;
+    titleBase.set(id, title);
+    runs.push(retitleReferences(note, oldTitle, title).catch((e) => toast(`Falha ao atualizar os links para "${title}": ${e}`)));
+  }
+  renamesDone = Promise.all(runs);
+}
+
+/** Espera os links das outras notas serem atualizados (antes de whenSaved ao sair/desatachar). */
+let renamesDone = Promise.resolve();
+async function settleRenames() {
+  if (renameTimer) propagateRenames();
+  await renamesDone;
+}
+
+async function retitleReferences(note, oldTitle, title) {
+  // Título antigo ainda é de outra nota (ou apelido de outra): links pendentes por título são dela.
+  titleIndex = null;
+  const other = getIndex().resolve(oldTitle);
+  const byTitle = !other || other.id === note.id;
+  const oldKey = linkTargetKey(oldTitle);
+  const refs = state.notes.filter(
+    (n) => n.id !== note.id && (n.links || []).some((l) => (typeof l === "number" ? l === note.id : byTitle && linkTargetKey(l) === oldKey)),
+  );
+  if (!refs.length) return;
+  const changed = [];
+  for (const ref of refs) {
+    await ensureContent(ref);
+    const html = retargetLinks(ref.content, note.id, oldTitle, title, { byTitle });
+    if (html === null) continue;
+    // Não é edição de quem escreveu a nota: a data de edição não muda.
+    ref.content = html;
+    ref.links = noteLinks(html);
+    ref.dirty = true;
+    changed.push(ref);
+  }
+  if (!changed.length) return;
+  saveNoteContent(changed, storeError);
+  notesChanged();
+  queueListRender();
+  const open = changed.find((n) => n.id === ui.selectedId);
+  if (open) loadSelectedIntoEditor();
 }
 
 function saveFolders() {
@@ -1494,6 +1567,11 @@ function renderChrome() {
   appEl.classList.toggle("vault", isVault());
   appEl.classList.toggle("zettel", zk());
   appEl.classList.toggle("sidebar-hidden", ui.sidebarHidden);
+  appEl.classList.toggle("zen", zenMode);
+  appEl.querySelectorAll('[data-action="zen"]').forEach((btn) => {
+    btn.classList.toggle("active", zenMode);
+    btn.title = zenMode ? "Sair do modo zen (Ctrl+. ou Esc)" : "Modo zen: só a nota, sem pastas nem lista (Ctrl+.; Esc sai)";
+  });
   const editing = state.activeMainView === "notes" && !state.desktopMode && ui.pane === "editor";
   document.body.classList.toggle("notes-editing", editing);
 
@@ -1572,6 +1650,29 @@ function closeDiff({ render = true } = {}) {
   }
 }
 
+// Modo zen (desktop): esconde pastas, lista e a barra; lembrado no localStorage.
+const ZEN_KEY = "nt-zen";
+let zenMode = false;
+try {
+  zenMode = localStorage.getItem(ZEN_KEY) === "1";
+} catch {}
+
+function setZen(on) {
+  if (on === zenMode) return;
+  zenMode = on;
+  try {
+    localStorage.setItem(ZEN_KEY, on ? "1" : "0");
+  } catch {}
+  if (on) {
+    closeMenu();
+    closePopover();
+    if (ui.scope === "graph") return restoreLocation({ scope: graphReturnScope, query: "", id: ui.selectedId });
+    closeDiff({ render: false });
+  }
+  renderChrome();
+  if (on && selectedNote() && !document.activeElement?.closest?.("#nt-editor-scroll")) focusEditorEnd();
+}
+
 // Largura da barra lateral (pastas + controle de versão), arrastando a borda; fica no localStorage.
 const SIDEBAR_W_KEY = "nt-sidebar-w";
 const sidebarWidth = (w) => Math.round(Math.min(Math.max(w, 220), Math.max(220, Math.min(640, window.innerWidth * 0.5))));
@@ -1624,6 +1725,7 @@ function initGit() {
     beforeWrite: async () => {
       discardIfEmpty(ui.selectedId);
       flushNotesSave();
+      await settleRenames();
       await whenSaved();
     },
     afterWrite: async () => {
@@ -1638,6 +1740,7 @@ function initGit() {
     flush: async () => {
       discardIfEmpty(ui.selectedId);
       flushNotesSave();
+      await settleRenames();
       await whenSaved();
     },
     sync: () => syncVault(),
@@ -1801,6 +1904,7 @@ function loadSelectedIntoEditor({ focus = false } = {}) {
       saveNotesSoon();
     }
     lastTitle = titleOf(note);
+    rememberTitle(note, lastTitle);
     renderEditorDate(note); // libera a data de criação (conteúdo carregado)
     renderPropsPanel();
     renderLinksPanel();
@@ -1830,6 +1934,7 @@ function handleEditorInput(html) {
   if (title !== lastTitle) {
     lastTitle = title;
     titleIndex = null;
+    if (titleBase.has(note.id)) queueRenames();
   }
   if (linksChanged) queueLinksPanel();
   propsPanel?.place(); // o título (1º bloco) pode ter mudado de altura, inclusive ao desfazer
@@ -2051,6 +2156,7 @@ const ACTIONS = {
     ui.sidebarHidden = !ui.sidebarHidden;
     renderChrome();
   },
+  zen: () => setZen(!zenMode),
   desktop: () => enterDesktopMode(),
   tray: () => exitDesktopMode(),
   "close-desktop": () => exitDesktopMode({ visible: false }),
@@ -2084,6 +2190,10 @@ function handleGlobalKeydown(e) {
     e.preventDefault();
     return ui.scope === "graph" ? restoreLocation({ scope: graphReturnScope, query: "", id: ui.selectedId }) : openGraph();
   }
+  if (mod && !e.shiftKey && !e.altKey && e.key === "." && state.desktopMode) {
+    e.preventDefault();
+    return setZen(!zenMode);
+  }
 
   if (e.key === "Escape") {
     if (isFindOpen()) return closeFind({ select: false });
@@ -2102,6 +2212,8 @@ function handleGlobalKeydown(e) {
       if (!state.desktopMode) ui.pane = "folders";
       return renderNotes();
     }
+    // Último uso do Esc: menus/blocos de código que tratam o Esc param a propagação antes.
+    if (zenMode && state.desktopMode && !e.defaultPrevented) return setZen(false);
     return;
   }
   if (mod && !e.shiftKey && key === "n") {
@@ -2260,6 +2372,7 @@ export function initNotes() {
     flush: async () => {
       discardIfEmpty(ui.selectedId);
       flushNotesSave();
+      await settleRenames();
       await whenSaved();
     },
     reload: async () => {
@@ -2328,7 +2441,11 @@ export const notesHost = {
     return findNote(id);
   },
   /** O conteúdo/propriedades mudaram fora do editor: grava e atualiza a interface. */
-  changed(note) {
+  changed(note, oldTitle = null) {
+    if (oldTitle) {
+      rememberTitle(note, oldTitle);
+      if (!renameTimer) renameTimer = -1; // flushNotesSave logo abaixo propaga o título novo
+    }
     note.dirty = true;
     note.updated_at = Date.now();
     note.links = noteLinks(note.content);
@@ -2343,6 +2460,7 @@ export const notesHost = {
   },
   async flush() {
     flushNotesSave();
+    await settleRenames();
     await whenSaved();
   },
 };
